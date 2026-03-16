@@ -123,26 +123,22 @@ function LoginScreen({ onLogin }) {
     if(phone.length !== 10) { setError("Enter a valid 10-digit WhatsApp number"); return; }
     setLoading(true); setError("");
     try {
-      // Generate 6-digit OTP
       const code = Math.floor(100000 + Math.random() * 900000).toString();
-      const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 min
+      const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
-      // Save OTP to Supabase
-      const { data, error: dbErr } = await supabase
-        .from("otp_sessions")
-        .insert({ phone: `+91${phone}`, otp_code: code, expires_at: expires })
-        .select("id").single();
+      // Try to save OTP session — if it fails in dev, still proceed
+      try {
+        const { data, error: dbErr } = await supabase
+          .from("otp_sessions")
+          .insert({ phone: `+91${phone}`, otp_code: code, expires_at: expires })
+          .select("id").single();
+        if(!dbErr && data) setSessionId(data.id);
+      } catch(dbEx) {
+        console.warn("OTP session save failed, continuing in dev mode:", dbEx);
+      }
 
-      if(dbErr) throw dbErr;
-      setSessionId(data.id);
-
-      // Send via Edge Function (calls Twilio WhatsApp)
-      await fetch(SEND_OTP_FN, {
-        method: "POST",
-        headers: { "Content-Type": "application/json",
-          "Authorization": `Bearer ${SUPABASE_ANON}` },
-        body: JSON.stringify({ phone: `+91${phone}`, code }),
-      });
+      // In dev — just log, don't call Twilio
+      console.log("DEV MODE: OTP is 123456 (bypass code)");
 
       setStep("otp");
       setResendTimer(30);
@@ -157,20 +153,24 @@ function LoginScreen({ onLogin }) {
     if(otp.length !== 6) { setError("Enter the 6-digit OTP"); return; }
     setLoading(true); setError("");
     try {
-      const { data: session, error: fetchErr } = await supabase
-        .from("otp_sessions")
-        .select("*")
-        .eq("id", sessionId)
-        .eq("phone", `+91${phone}`)
-        .eq("used", false)
-        .single();
+      // DEV BYPASS — remove before production
+      const isDev = otp === "123456";
 
-      if(fetchErr || !session) throw new Error("Invalid session");
-      if(new Date(session.expires_at) < new Date()) throw new Error("OTP expired");
-      if(session.otp_code !== otp) { setError("Incorrect OTP. Please try again."); setLoading(false); return; }
+      if(!isDev) {
+        if(!sessionId) { setError("Session expired. Please request a new OTP."); setLoading(false); return; }
+        const { data: session, error: fetchErr } = await supabase
+          .from("otp_sessions")
+          .select("*")
+          .eq("id", sessionId)
+          .eq("phone", `+91${phone}`)
+          .eq("used", false)
+          .single();
 
-      // Mark OTP as used
-      await supabase.from("otp_sessions").update({ used: true }).eq("id", sessionId);
+        if(fetchErr || !session) throw new Error("Invalid session");
+        if(new Date(session.expires_at) < new Date()) throw new Error("OTP expired");
+        if(session.otp_code !== otp) { setError("Incorrect OTP. Please try again."); setLoading(false); return; }
+        await supabase.from("otp_sessions").update({ used: true }).eq("id", sessionId);
+      }
 
       // Check if owner exists
       const { data: existing } = await supabase
@@ -267,6 +267,10 @@ function LoginScreen({ onLogin }) {
                     fontWeight:700, fontSize:12, marginLeft:8, cursor:"pointer" }}>Change</button>
               </div>
               <OtpInput value={otp} onChange={setOtp}/>
+              <div style={{ textAlign:"center", marginTop:10, padding:"7px 14px",
+                background:T.amberL, borderRadius:8, fontSize:11, fontWeight:700, color:T.amber }}>
+                🔧 Dev mode — enter <strong>123456</strong> to bypass WhatsApp OTP
+              </div>
               {error && <div style={{ color:T.rose, fontSize:12, marginTop:12,
                 textAlign:"center", fontWeight:600 }}>{error}</div>}
               <button onClick={verifyOtp} disabled={loading || otp.length < 6}
