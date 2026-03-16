@@ -140,9 +140,28 @@ const Btn=({children,onClick,variant="primary",size="md",full,style:s={}})=>{
   return <button onClick={onClick} style={{cursor:"pointer",borderRadius:10,fontFamily:"inherit",fontWeight:800,fontSize:size==="sm"?12:size==="lg"?15:14,padding:sz[size],width:full?"100%":undefined,transition:"opacity .15s",...v[variant],...s}} onMouseOver={e=>e.currentTarget.style.opacity=".85"} onMouseOut={e=>e.currentTarget.style.opacity="1"}>{children}</button>;
 };
 
+// ── URL PARAM HELPERS ────────────────────────────────────────────
+const getParams = () => {
+  try {
+    const p = new URLSearchParams(window.location.search);
+    return {
+      name:  p.get("name")  || "",
+      city:  p.get("city")  || "",
+      flats: parseInt(p.get("flats")||"0",10)||0,
+      plan:  p.get("plan")  || "",
+      beta:  p.get("beta")  === "1",
+      role:  p.get("role")  || "owner",
+    };
+  } catch(e){ return {}; }
+};
+
 // ── MAIN ────────────────────────────────────────────────────────
 export default function App(){
-  const [screen,setScreen]=useState("landing");
+  const params = getParams();
+  const isBetaUser = params.beta || !!params.name;
+
+  // If arrived via personalised beta link → go straight to demo
+  const [screen,setScreen]=useState(isBetaUser ? "demo-owner" : "landing");
   const [billing,setBilling]=useState("monthly");
   const [audience,setAudience]=useState("owner");
   const [openFaq,setOpenFaq]=useState(null);
@@ -152,39 +171,14 @@ export default function App(){
   const [selFlat,setSelFlat]=useState(null);
   const [mFilter,setMFilter]=useState("all");
   const [toast,setToast]=useState(null);
-  const [regModal,setRegModal]=useState(false);
-  const [regPlan,setRegPlan]=useState(null);
-  const [regForm,setRegForm]=useState({name:"",phone:"",email:"",city:"Bengaluru",flats:"",role:"owner"});
-  const [regSubmitting,setRegSubmitting]=useState(false);
-  const [regDone,setRegDone]=useState(false);
+  const [betaBannerDismissed,setBetaBannerDismissed]=useState(false);
 
-  // Replace with your Google Apps Script Web App URL (see setup guide below)
-  const SHEET_URL="https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec";
+  const FORM_URL="https://docs.google.com/forms/d/e/1FAIpQLScd2tgV61wlCkJMfnQSOMa0ExM-c0ZpJVU1xOd6XD63Fs6pQA/viewform";
 
   const showToast=(msg)=>{setToast(msg);setTimeout(()=>setToast(null),3500);};
   const markPaid=(fid,type)=>{setFlats(p=>p.map(f=>f.id===fid?{...f,[`${type}Paid`]:true}:f));showToast(`${type} marked as paid ✓`);};
   const goDemo=()=>{setDemoTab("dashboard");setSelFlat(null);setScreen("demo-owner");};
-  const openReg=(plan=null)=>{setRegPlan(plan);setRegDone(false);setRegForm({name:"",phone:"",email:"",city:"Bengaluru",flats:"",role:"owner"});setRegModal(true);};
-
-  const submitToSheet = async (data) => {
-    try {
-      await fetch(SHEET_URL, {
-        method:"POST", mode:"no-cors",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({...data, plan:regPlan?.name||"Not selected", timestamp:new Date().toLocaleString("en-IN"), source:"Beta Landing Page"}),
-      });
-    } catch(e) {}
-    return true;
-  };
-
-  const handleRegSubmit = async () => {
-    if(!regForm.name||!regForm.phone){showToast("Please fill your name and phone");return;}
-    setRegSubmitting(true);
-    await submitToSheet(regForm);
-    setRegSubmitting(false);
-    setRegDone(true);
-    showToast("Registered! We'll WhatsApp you within 24hrs ✓");
-  };
+  const openReg=(plan=null)=>{ window.open(FORM_URL, "_blank"); };
 
   const occupied=flats.filter(f=>f.occupied).length;
   const totalExp=flats.filter(f=>f.occupied).reduce((s,f)=>s+f.rent,0);
@@ -202,24 +196,49 @@ export default function App(){
   const Toast=()=>toast?<div style={{position:"fixed",bottom:28,left:"50%",transform:"translateX(-50%)",padding:"11px 24px",borderRadius:13,background:`linear-gradient(135deg,${T.saffron},${T.saffronB})`,color:"#fff",fontWeight:800,fontSize:13,zIndex:9999,whiteSpace:"nowrap",animation:"toastIn .25s ease",boxShadow:`0 8px 28px ${T.saffron}35`}}>{toast}</div>:null;
 
   // ── DEMO OWNER ───────────────────────────────────────────────
+  const firstName = params.name ? params.name.split(" ")[0] : "";
+  const displayName = firstName || "Owner";
+  const planLabel = params.plan ? PLANS.find(p=>p.id===params.plan)?.name || params.plan : "";
+
   if(screen==="demo-owner") return(
     <div style={{fontFamily:"'Nunito','Segoe UI',sans-serif",background:T.bg,color:T.ink,minHeight:"100vh",display:"flex",flexDirection:"column",maxWidth:520,margin:"0 auto"}}>
       <style>{CSS}</style>
+
+      {/* Beta user personalised welcome banner */}
+      {isBetaUser && !betaBannerDismissed && (
+        <div style={{background:`linear-gradient(135deg,${T.plum},#9333ea)`,padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+          <div style={{fontSize:12,color:"#fff",fontWeight:700,lineHeight:1.4}}>
+            👋 Welcome to your Rentok Beta, <strong>{displayName}</strong>!
+            {planLabel && <span style={{opacity:.85}}> · {planLabel} plan</span>}
+            <span style={{display:"block",fontSize:10,opacity:.8,fontWeight:500,marginTop:1}}>This is a preview of your dashboard. Real data syncs once your account is activated.</span>
+          </div>
+          <button onClick={()=>setBetaBannerDismissed(true)} style={{background:"rgba(255,255,255,.2)",border:"none",borderRadius:6,padding:"4px 9px",fontSize:11,fontWeight:700,color:"#fff",cursor:"pointer",flexShrink:0}}>✕</button>
+        </div>
+      )}
+
       <div style={{background:T.surface,borderBottom:`1.5px solid ${T.border}`,padding:"11px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <div style={{width:30,height:30,borderRadius:9,background:`linear-gradient(135deg,${T.saffron},${T.saffronB})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>🔑</div>
-          <div><div style={{fontWeight:900,fontSize:14,color:T.ink,letterSpacing:-.3}}>Rentok</div><div style={{fontSize:9,color:T.muted}}>Owner Portal · Demo</div></div>
+          <div>
+            <div style={{fontWeight:900,fontSize:14,color:T.ink,letterSpacing:-.3}}>Rentok</div>
+            <div style={{fontSize:9,color:T.muted}}>{isBetaUser ? `${displayName}'s Portal · Beta` : "Owner Portal · Demo"}</div>
+          </div>
         </div>
         <div style={{display:"flex",gap:7,alignItems:"center"}}>
-          <div style={{padding:"3px 9px",borderRadius:20,background:T.amberL,border:`1px solid ${T.amber}35`,fontSize:9,fontWeight:800,color:T.amber}}>🎁 Demo</div>
+          <div style={{padding:"3px 9px",borderRadius:20,background:isBetaUser?T.plumL:T.amberL,border:`1px solid ${isBetaUser?T.plum:T.amber}35`,fontSize:9,fontWeight:800,color:isBetaUser?T.plum:T.amber}}>{isBetaUser?"🚀 Beta":"🎁 Demo"}</div>
           <button onClick={()=>{setTenantTab("home");setScreen("demo-tenant");}} style={{background:T.tealL,border:`1px solid ${T.teal}30`,borderRadius:8,padding:"4px 10px",fontSize:11,fontWeight:700,color:T.teal,cursor:"pointer"}}>🏠 Tenant View</button>
-          <button onClick={()=>setScreen("landing")} style={{background:T.panel,border:`1.5px solid ${T.border}`,borderRadius:8,padding:"4px 10px",fontSize:11,fontWeight:700,color:T.muted,cursor:"pointer"}}>← Back</button>
+          {!isBetaUser && <button onClick={()=>setScreen("landing")} style={{background:T.panel,border:`1.5px solid ${T.border}`,borderRadius:8,padding:"4px 10px",fontSize:11,fontWeight:700,color:T.muted,cursor:"pointer"}}>← Back</button>}
         </div>
       </div>
 
       <div style={{flex:1,overflowY:"auto",paddingBottom:68}}>
         {demoTab==="dashboard"&&(
           <div style={{padding:"18px 16px",animation:"fadeUp .3s ease"}}>
+            {firstName && (
+              <div style={{fontSize:15,fontWeight:800,color:T.ink,marginBottom:14}}>
+                Good morning, {firstName}! 👋
+              </div>
+            )}
             <div style={{background:`linear-gradient(135deg,${T.saffron},${T.saffronB})`,borderRadius:18,padding:"20px",marginBottom:18,color:"#fff",position:"relative",overflow:"hidden"}}>
               <div style={{position:"absolute",top:-20,right:-20,width:90,height:90,borderRadius:"50%",background:"rgba(255,255,255,.1)",pointerEvents:"none"}}/>
               <div style={{fontSize:10,fontWeight:700,opacity:.8,letterSpacing:.5,marginBottom:3}}>THIS MONTH · NET INCOME</div>
@@ -274,6 +293,26 @@ export default function App(){
                 <button onClick={()=>showToast(`WhatsApp sent to ${f.tenant} ✓`)} style={{background:"#25D366",border:"none",borderRadius:8,padding:"5px 10px",fontSize:11,fontWeight:700,color:"#fff",cursor:"pointer"}}>📱</button>
               </div>
             ))}
+
+            {/* Beta user feedback nudge */}
+            {isBetaUser && (
+              <div style={{marginTop:8,background:T.plumL,border:`1.5px solid ${T.plum}25`,borderRadius:16,padding:"16px"}}>
+                <div style={{fontSize:13,fontWeight:900,color:T.plum,marginBottom:6}}>🙏 You're shaping Rentok</div>
+                <div style={{fontSize:12,color:T.ink2,lineHeight:1.6,marginBottom:12}}>
+                  Explore the dashboard, reminders, and agreements tabs. What would make this 10× more useful for you?
+                </div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  <a href={`https://wa.me/919876500000?text=Rentok feedback from ${params.name||"beta user"}: `} target="_blank" rel="noreferrer"
+                    style={{flex:1,minWidth:120,background:"#25D366",border:"none",borderRadius:10,padding:"9px 12px",fontSize:12,fontWeight:800,color:"#fff",cursor:"pointer",textAlign:"center",textDecoration:"none",display:"block"}}>
+                    💬 WhatsApp Feedback
+                  </a>
+                  <a href="mailto:rentoksupport@gmail.com"
+                    style={{flex:1,minWidth:120,background:T.plum,border:"none",borderRadius:10,padding:"9px 12px",fontSize:12,fontWeight:800,color:"#fff",cursor:"pointer",textAlign:"center",textDecoration:"none",display:"block"}}>
+                    📧 Email Us
+                  </a>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -721,90 +760,6 @@ export default function App(){
           <a href="mailto:rentoksupport@gmail.com" style={{color:T.muted,fontSize:11,fontWeight:700,textDecoration:"none"}}>Contact</a>
         </div>
       </footer>
-
-      {/* REGISTRATION MODAL */}
-      {regModal&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(44,36,22,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2000,padding:20}} onClick={()=>setRegModal(false)}>
-          <div style={{background:T.surface,border:`1.5px solid ${T.border}`,borderRadius:20,padding:28,width:"100%",maxWidth:440,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
-            {!regDone?(
-              <>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"start",marginBottom:20}}>
-                  <div>
-                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
-                      <div style={{fontSize:18,fontWeight:900,color:T.ink,letterSpacing:-.4}}>Join Rentok Beta</div>
-                      <span style={{fontSize:9,fontWeight:800,background:T.amberL,color:T.amber,padding:"2px 7px",borderRadius:20,letterSpacing:.5}}>FREE</span>
-                    </div>
-                    <div style={{fontSize:12,color:T.muted}}>{regPlan?`${regPlan.icon} ${regPlan.name} plan selected`:"Early access · Free during beta"}</div>
-                  </div>
-                  <button onClick={()=>setRegModal(false)} style={{background:"none",border:"none",fontSize:22,color:T.muted,cursor:"pointer",lineHeight:1,padding:"0 4px"}}>×</button>
-                </div>
-
-                {regPlan&&(
-                  <div style={{padding:"10px 14px",background:regPlan.light,border:`1px solid ${regPlan.color}25`,borderRadius:12,marginBottom:18,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <div style={{fontSize:13,fontWeight:700,color:regPlan.color}}>{regPlan.icon} {regPlan.name} — {regPlan.units}</div>
-                    <div style={{fontSize:12,color:regPlan.color,fontWeight:600}}>Free in beta</div>
-                  </div>
-                )}
-
-                {[
-                  {label:"Full name",key:"name",placeholder:"e.g. Suresh Rao",type:"text",required:true},
-                  {label:"WhatsApp number",key:"phone",placeholder:"+91 XXXXX XXXXX",type:"tel",required:true},
-                  {label:"Email address",key:"email",placeholder:"yourname@gmail.com",type:"email",required:false},
-                  {label:"City",key:"city",placeholder:"e.g. Bengaluru",type:"text",required:false},
-                  {label:"Number of flats / PG rooms",key:"flats",placeholder:"e.g. 5",type:"number",required:false},
-                ].map(f=>(
-                  <div key={f.key} style={{marginBottom:13}}>
-                    <div style={{fontSize:10,color:T.muted,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",marginBottom:5}}>
-                      {f.label}{f.required&&<span style={{color:T.rose}}> *</span>}
-                    </div>
-                    <input type={f.type} value={regForm[f.key]} onChange={e=>setRegForm(p=>({...p,[f.key]:e.target.value}))} placeholder={f.placeholder}
-                      style={{width:"100%",background:T.panel,border:`1.5px solid ${T.border2}`,color:T.ink,borderRadius:10,padding:"10px 13px",fontFamily:"inherit",fontSize:14,boxSizing:"border-box"}}/>
-                  </div>
-                ))}
-
-                <div style={{marginBottom:16}}>
-                  <div style={{fontSize:10,color:T.muted,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",marginBottom:6}}>I am a</div>
-                  <div style={{display:"flex",gap:8}}>
-                    {[["owner","🏢 Owner"],["pg","🛏️ PG Owner"],["both","🏢 Both"]].map(([v,l])=>(
-                      <button key={v} onClick={()=>setRegForm(p=>({...p,role:v}))} style={{flex:1,padding:"8px 4px",borderRadius:9,border:`1.5px solid ${regForm.role===v?T.saffron:T.border2}`,background:regForm.role===v?T.saffronL:T.panel,color:regForm.role===v?T.saffron:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{l}</button>
-                    ))}
-                  </div>
-                </div>
-
-                <div style={{padding:"10px 13px",background:T.tealL,border:`1px solid ${T.teal}25`,borderRadius:10,fontSize:12,color:T.teal,marginBottom:18,lineHeight:1.6}}>
-                  ✓ We'll WhatsApp you with your access link within 24 hours.
-                </div>
-
-                <button onClick={handleRegSubmit} disabled={regSubmitting} style={{width:"100%",padding:"13px",background:`linear-gradient(135deg,${T.saffron},${T.saffronB})`,border:"none",borderRadius:12,fontSize:15,fontWeight:800,color:"#fff",cursor:"pointer",fontFamily:"inherit",opacity:regSubmitting?.7:1}}>
-                  {regSubmitting?"Registering…":"Register for Beta →"}
-                </button>
-                <div style={{textAlign:"center",marginTop:10,fontSize:11,color:T.muted}}>
-                  Questions? <a href="mailto:rentoksupport@gmail.com" style={{color:T.saffron,fontWeight:700,textDecoration:"none"}}>rentoksupport@gmail.com</a>
-                </div>
-              </>
-            ):(
-              <div style={{textAlign:"center",padding:"20px 0"}}>
-                <div style={{fontSize:52,marginBottom:14}}>🎉</div>
-                <div style={{fontSize:20,fontWeight:900,color:T.ink,letterSpacing:-.5,marginBottom:8}}>You're on the list!</div>
-                <div style={{fontSize:14,color:T.muted,lineHeight:1.7,marginBottom:20}}>
-                  Thanks <span style={{fontWeight:800,color:T.ink}}>{regForm.name.split(" ")[0]}</span>! We'll WhatsApp you at <span style={{fontWeight:800,color:T.ink}}>{regForm.phone}</span> within 24 hours.
-                </div>
-                <div style={{padding:"14px 16px",background:T.tealL,border:`1px solid ${T.teal}25`,borderRadius:12,marginBottom:20,textAlign:"left"}}>
-                  <div style={{fontSize:12,fontWeight:800,color:T.teal,marginBottom:8}}>What happens next:</div>
-                  {["We review your registration","You get a WhatsApp from us within 24hrs","Free beta access activated","Share feedback and shape the product"].map((s,i)=>(
-                    <div key={i} style={{display:"flex",gap:8,marginBottom:6,fontSize:12,color:T.ink2,alignItems:"flex-start"}}>
-                      <span style={{color:T.teal,fontWeight:800,flexShrink:0}}>{i+1}.</span><span>{s}</span>
-                    </div>
-                  ))}
-                </div>
-                <button onClick={()=>setRegModal(false)} style={{width:"100%",padding:"11px",background:T.saffron,border:"none",borderRadius:11,fontSize:14,fontWeight:800,color:"#fff",cursor:"pointer",fontFamily:"inherit"}}>
-                  Done
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       <Toast/>
     </div>
