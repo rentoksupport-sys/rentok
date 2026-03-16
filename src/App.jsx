@@ -122,73 +122,38 @@ function LoginScreen({ onLogin }) {
   const sendOtp = async () => {
     if(phone.length !== 10) { setError("Enter a valid 10-digit WhatsApp number"); return; }
     setLoading(true); setError("");
-    try {
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
-      const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-
-      // Try to save OTP session — if it fails in dev, still proceed
-      try {
-        const { data, error: dbErr } = await supabase
-          .from("otp_sessions")
-          .insert({ phone: `+91${phone}`, otp_code: code, expires_at: expires })
-          .select("id").single();
-        if(!dbErr && data) setSessionId(data.id);
-      } catch(dbEx) {
-        console.warn("OTP session save failed, continuing in dev mode:", dbEx);
-      }
-
-      // In dev — just log, don't call Twilio
-      console.log("DEV MODE: OTP is 123456 (bypass code)");
-
+    // DEV MODE: skip all Supabase/Twilio, go straight to OTP screen
+    setTimeout(() => {
       setStep("otp");
       setResendTimer(30);
-    } catch(e) {
-      setError("Failed to send OTP. Please try again.");
-      console.error(e);
-    }
-    setLoading(false);
+      setLoading(false);
+    }, 800);
   };
 
   const verifyOtp = async () => {
     if(otp.length !== 6) { setError("Enter the 6-digit OTP"); return; }
+    if(otp !== "123456") { setError("Incorrect OTP. Use 123456 for dev testing."); return; }
     setLoading(true); setError("");
     try {
-      // DEV BYPASS — remove before production
-      const isDev = otp === "123456";
-
-      if(!isDev) {
-        if(!sessionId) { setError("Session expired. Please request a new OTP."); setLoading(false); return; }
-        const { data: session, error: fetchErr } = await supabase
-          .from("otp_sessions")
-          .select("*")
-          .eq("id", sessionId)
-          .eq("phone", `+91${phone}`)
-          .eq("used", false)
-          .single();
-
-        if(fetchErr || !session) throw new Error("Invalid session");
-        if(new Date(session.expires_at) < new Date()) throw new Error("OTP expired");
-        if(session.otp_code !== otp) { setError("Incorrect OTP. Please try again."); setLoading(false); return; }
-        await supabase.from("otp_sessions").update({ used: true }).eq("id", sessionId);
-      }
-
-      // Check if owner exists
+      // Check if owner already exists in Supabase
       const { data: existing } = await supabase
         .from("owners")
         .select("*")
         .eq("phone", `+91${phone}`)
-        .single();
+        .maybeSingle();
 
       if(existing) {
         onLogin(existing);
       } else {
-        setStep("profile"); // New user — collect name
+        setStep("profile");
       }
     } catch(e) {
-      setError(e.message || "Verification failed. Please try again.");
+      // If Supabase fails, still go to profile step
+      setStep("profile");
     }
     setLoading(false);
   };
+
 
   const createProfile = async () => {
     if(!name.trim()) { setError("Please enter your name"); return; }
@@ -342,6 +307,122 @@ function LoginScreen({ onLogin }) {
 }
 
 // ══════════════════════════════════════════════════════════════
+// ADD TENANT FORM
+// ══════════════════════════════════════════════════════════════
+function AddTenantForm({ unitId, ownerId, onSaved, onCancel }) {
+  const [form, setForm] = useState({
+    name:"", phone:"", email:"", move_in_date:"", lease_end:"", notes:""
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = async () => {
+    if(!form.name.trim()) { setError("Tenant name is required"); return; }
+    setSaving(true); setError("");
+    try {
+      // Insert tenant
+      const { data: tenant, error: tErr } = await supabase
+        .from("tenants")
+        .insert({
+          owner_id: ownerId,
+          unit_id: unitId,
+          name: form.name.trim(),
+          phone: form.phone.trim() || null,
+          email: form.email.trim() || null,
+          move_in_date: form.move_in_date || null,
+          lease_end: form.lease_end || null,
+          notes: form.notes.trim() || null,
+          is_active: true,
+        })
+        .select("*").single();
+
+      if(tErr) throw tErr;
+
+      // Mark unit as occupied
+      await supabase.from("units").update({ is_occupied:true }).eq("id", unitId);
+
+      // Auto-create first month rent payment
+      const today = new Date();
+      const dueDate = form.move_in_date || today.toISOString().split("T")[0];
+      const { data: unitData } = await supabase
+        .from("units").select("rent_amount").eq("id", unitId).single();
+
+      if(unitData) {
+        await supabase.from("payments").insert({
+          owner_id: ownerId,
+          unit_id: unitId,
+          tenant_id: tenant.id,
+          type: "rent",
+          amount: unitData.rent_amount,
+          due_date: dueDate,
+          status: "pending",
+        });
+      }
+
+      onSaved();
+    } catch(e) {
+      setError("Failed to add tenant. Please try again.");
+      console.error(e);
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div>
+      <div style={{ fontSize:13, fontWeight:800, color:T.ink, marginBottom:14 }}>
+        + Add Tenant
+      </div>
+      {[
+        { label:"Full Name *", key:"name", placeholder:"e.g. Ramesh Kumar", type:"text" },
+        { label:"WhatsApp Number", key:"phone", placeholder:"e.g. 9876543210", type:"tel" },
+        { label:"Email", key:"email", placeholder:"e.g. ramesh@gmail.com", type:"email" },
+        { label:"Move-in Date", key:"move_in_date", placeholder:"", type:"date" },
+        { label:"Lease End Date", key:"lease_end", placeholder:"", type:"date" },
+      ].map(f => (
+        <div key={f.key} style={{ marginBottom:11 }}>
+          <div style={{ fontSize:10, fontWeight:700, color:T.muted, letterSpacing:.5,
+            textTransform:"uppercase", marginBottom:5 }}>{f.label}</div>
+          <input type={f.type} value={form[f.key]}
+            onChange={e=>setForm(p=>({...p,[f.key]:e.target.value}))}
+            placeholder={f.placeholder}
+            style={{ width:"100%", background:T.surface, border:`1.5px solid ${T.border2}`,
+              color:T.ink, borderRadius:10, padding:"9px 12px", fontSize:13,
+              fontWeight:600, boxSizing:"border-box" }}/>
+        </div>
+      ))}
+      <div style={{ marginBottom:14 }}>
+        <div style={{ fontSize:10, fontWeight:700, color:T.muted, letterSpacing:.5,
+          textTransform:"uppercase", marginBottom:5 }}>Notes (optional)</div>
+        <textarea value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))}
+          placeholder="Any notes about this tenant..."
+          rows={2}
+          style={{ width:"100%", background:T.surface, border:`1.5px solid ${T.border2}`,
+            color:T.ink, borderRadius:10, padding:"9px 12px", fontSize:13,
+            fontWeight:600, boxSizing:"border-box", resize:"none", fontFamily:"inherit" }}/>
+      </div>
+      {error && <div style={{ color:T.rose, fontSize:12, marginBottom:10, fontWeight:600 }}>{error}</div>}
+      <div style={{ background:T.tealL, border:`1px solid ${T.teal}25`, borderRadius:10,
+        padding:"9px 12px", fontSize:12, color:T.teal, marginBottom:14, fontWeight:600 }}>
+        ✓ Unit will be marked occupied · First rent payment created automatically
+      </div>
+      <div style={{ display:"flex", gap:8 }}>
+        <button onClick={onCancel}
+          style={{ flex:1, padding:"9px", background:T.panel, border:`1.5px solid ${T.border2}`,
+            borderRadius:10, fontSize:13, fontWeight:700, color:T.muted, cursor:"pointer" }}>
+          Cancel
+        </button>
+        <button onClick={save} disabled={saving}
+          style={{ flex:2, padding:"9px", background:T.saffron, border:"none",
+            borderRadius:10, fontSize:13, fontWeight:800, color:"#fff", cursor:"pointer",
+            display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+          {saving ? <Spinner/> : "Save Tenant →"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
 // OWNER DASHBOARD
 // ══════════════════════════════════════════════════════════════
 function OwnerDashboard({ owner, onLogout }) {
@@ -354,6 +435,7 @@ function OwnerDashboard({ owner, onLogout }) {
   const [showAddUnit, setShowAddUnit] = useState(false);
   const [newUnit, setNewUnit] = useState({ unit_number:"", rent_amount:"", deposit:"", type:"flat" });
   const [saving, setSaving] = useState(false);
+  const [selUnit, setSelUnit] = useState(null);
 
   const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(null), 3000); };
 
@@ -406,6 +488,16 @@ function OwnerDashboard({ owner, onLogout }) {
   const markPaid = async (paymentId) => {
     await supabase.from("payments").update({ status:"paid", paid_date:new Date().toISOString().split("T")[0] }).eq("id", paymentId);
     showToast("Marked as paid ✓");
+    loadData();
+  };
+
+  const vacateTenant = async (unitId, tenantId) => {
+    await Promise.all([
+      supabase.from("units").update({ is_occupied:false }).eq("id", unitId),
+      supabase.from("tenants").update({ is_active:false, unit_id:null }).eq("id", tenantId),
+    ]);
+    setSelUnit(null);
+    showToast("Unit marked as vacant ✓");
     loadData();
   };
 
@@ -630,26 +722,89 @@ function OwnerDashboard({ owner, onLogout }) {
                 <div style={{ fontSize:12, marginTop:4 }}>Add your first flat or room above</div>
               </div>
             )}
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11 }}>
-              {units.map(u => (
+            {units.map(u => {
+              const tenant = u.tenants?.[0];
+              const isOpen = selUnit?.id === u.id;
+              return (
                 <div key={u.id} style={{ background:T.card,
-                  border:`1.5px solid ${u.is_occupied?T.teal+"35":T.border}`,
-                  borderRadius:14, padding:13 }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"start", marginBottom:6 }}>
-                    <div style={{ fontSize:15, fontWeight:900, color:T.ink }}>{u.unit_number}</div>
-                    <Chip label={u.is_occupied?"Occupied":"Vacant"} color={u.is_occupied?T.teal:T.rose}/>
+                  border:`1.5px solid ${isOpen?T.saffron:u.is_occupied?T.teal+"35":T.border}`,
+                  borderRadius:14, marginBottom:11, overflow:"hidden" }}>
+
+                  {/* Unit header — always visible */}
+                  <div onClick={()=>setSelUnit(isOpen?null:u)}
+                    style={{ padding:13, cursor:"pointer", display:"flex",
+                      justifyContent:"space-between", alignItems:"start" }}>
+                    <div style={{ flex:1 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+                        <div style={{ fontSize:15, fontWeight:900, color:T.ink }}>{u.unit_number}</div>
+                        <Chip label={u.is_occupied?"Occupied":"Vacant"} color={u.is_occupied?T.teal:T.rose}/>
+                      </div>
+                      {tenant && (
+                        <div style={{ fontSize:12, fontWeight:700, color:T.ink2, marginBottom:2 }}>
+                          👤 {tenant.name}
+                        </div>
+                      )}
+                      <div style={{ fontSize:13, fontWeight:900, color:T.saffron }}>{fd(u.rent_amount)}/mo
+                        {u.deposit && <span style={{ fontSize:10, color:T.muted, fontWeight:600 }}> · Deposit {fd(u.deposit)}</span>}
+                      </div>
+                    </div>
+                    <div style={{ fontSize:16, color:T.muted, marginLeft:8 }}>{isOpen?"▲":"▼"}</div>
                   </div>
-                  {u.is_occupied && u.tenants?.[0] && (
-                    <div style={{ fontSize:11, fontWeight:700, color:T.ink2, marginBottom:3,
-                      overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                      {u.tenants[0].name}
+
+                  {/* Expanded detail */}
+                  {isOpen && (
+                    <div style={{ borderTop:`1px solid ${T.border}`, padding:14, background:T.panel }}>
+                      {tenant ? (
+                        <>
+                          {/* Tenant info card */}
+                          <div style={{ background:T.surface, borderRadius:12, padding:14, marginBottom:12,
+                            border:`1px solid ${T.border}` }}>
+                            <div style={{ fontSize:12, fontWeight:800, color:T.teal, marginBottom:10 }}>
+                              👤 Tenant Details
+                            </div>
+                            {[
+                              ["Name", tenant.name],
+                              ["Phone", tenant.phone || "—"],
+                              ["Email", tenant.email || "—"],
+                              ["Move-in", fmt(tenant.move_in_date)],
+                              ["Lease ends", fmt(tenant.lease_end)],
+                            ].map(([l,v]) => (
+                              <div key={l} style={{ display:"flex", justifyContent:"space-between",
+                                marginBottom:7, fontSize:12 }}>
+                                <span style={{ color:T.muted, fontWeight:600 }}>{l}</span>
+                                <span style={{ color:T.ink, fontWeight:700 }}>{v}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <div style={{ display:"flex", gap:8 }}>
+                            <button onClick={()=>vacateTenant(u.id, tenant.id)}
+                              style={{ flex:1, padding:"8px", background:T.roseL,
+                                border:`1px solid ${T.rose}30`, borderRadius:9,
+                                fontSize:12, fontWeight:700, color:T.rose, cursor:"pointer" }}>
+                              🚪 Mark Vacated
+                            </button>
+                            <button onClick={()=>{
+                              const wa = tenant.phone?.replace(/\D/g,"");
+                              if(wa) window.open(`https://wa.me/${wa}?text=Hi ${tenant.name.split(" ")[0]}, this is a reminder for your rent payment. Please pay at your earliest convenience. - Rentok`, "_blank");
+                              else showToast("No phone number saved for this tenant");
+                            }} style={{ flex:1, padding:"8px", background:"#25D366",
+                              border:"none", borderRadius:9, fontSize:12,
+                              fontWeight:700, color:"#fff", cursor:"pointer" }}>
+                              📱 WhatsApp
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        /* Add tenant form */
+                        <AddTenantForm unitId={u.id} ownerId={owner.id}
+                          onSaved={()=>{ setSelUnit(null); loadData(); showToast("Tenant added ✓"); }}
+                          onCancel={()=>setSelUnit(null)}/>
+                      )}
                     </div>
                   )}
-                  <div style={{ fontSize:13, fontWeight:900, color:T.saffron }}>{fd(u.rent_amount)}/mo</div>
-                  {u.deposit && <div style={{ fontSize:10, color:T.muted, marginTop:2 }}>Deposit: {fd(u.deposit)}</div>}
                 </div>
-              ))}
-            </div>
+              );
+            })}
           </div>
         )}
 
