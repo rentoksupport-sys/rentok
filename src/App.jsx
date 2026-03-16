@@ -174,6 +174,8 @@ export default function App(){
   const [betaBannerDismissed,setBetaBannerDismissed]=useState(false);
 
   const FORM_URL="https://docs.google.com/forms/d/e/1FAIpQLScd2tgV61wlCkJMfnQSOMa0ExM-c0ZpJVU1xOd6XD63Fs6pQA/viewform";
+  const WEBSITE="rentokay.netlify.app";
+  const EMAIL="rentoksupport@gmail.com";
 
   const showToast=(msg)=>{setToast(msg);setTimeout(()=>setToast(null),3500);};
   const markPaid=(fid,type)=>{setFlats(p=>p.map(f=>f.id===fid?{...f,[`${type}Paid`]:true}:f));showToast(`${type} marked as paid ✓`);};
@@ -489,6 +491,129 @@ export default function App(){
     </div>
   );
 
+  // ── LEGAL PAGES ─────────────────────────────────────────────
+  const LEGAL = {
+    privacy: {
+      title: "Privacy Policy",
+      badge: "DPDP Act 2023 Compliant",
+      updated: "16 March 2026",
+      sections: [
+        { h: "1. Introduction", body: `Rentok is committed to protecting your personal data. This Privacy Policy explains how we collect, use, store, and protect your information when you use our platform at ${WEBSITE}. This policy is compliant with India's Digital Personal Data Protection (DPDP) Act, 2023 and the Information Technology Act, 2000.` },
+        { h: "2. Data Fiduciary", body: `Rentok acts as the Data Fiduciary as defined under the DPDP Act, 2023. We determine the purpose and means of processing your personal data. Contact us at: ${EMAIL}` },
+        { h: "3. Information We Collect", bullets: ["Full name, mobile / WhatsApp number, email address", "City and property / tenant information you enter", "Payment information (processed via secure third-party UPI providers)", "Device type, browser, IP address, and pages visited"] },
+        { h: "4. How We Use Your Information", bullets: ["To provide, operate, and improve the Rentok platform", "To send WhatsApp rent reminders on your behalf", "To process payments and generate receipts", "To generate rental agreements and financial reports", "To respond to support requests and comply with legal obligations"] },
+        { h: "5. Legal Basis for Processing", bullets: ["Consent: You have given clear consent for specified purposes", "Contract: Processing is necessary to perform our contract with you", "Legal obligation: To comply with applicable Indian law", "Legitimate interests: For our legitimate business interests, balanced against your rights"] },
+        { h: "6. Data Sharing", body: "We do not sell your personal data. We may share data with payment processors (Razorpay), WhatsApp API providers (Interakt/Wati), cloud hosting (Supabase, Netlify), and Google services — all bound by data processing agreements. We may also disclose data when required by law or court order." },
+        { h: "7. Data Retention", bullets: ["Account data: Until deletion + 90 days", "Payment records: 7 years (Income Tax Act requirement)", "Rental agreements: 7 years (Indian Contract Act)", "Communication logs: 6 months", "Beta registration data: 12 months"] },
+        { h: "8. Your Rights (DPDP Act 2023)", bullets: ["Right to access your personal data", "Right to correction of inaccurate data", "Right to erasure (deletion)", "Right to withdraw consent at any time", "Right to grievance redressal", "Right to nominate another person to exercise your rights"] },
+        { h: "9. Data Security", body: "We use TLS/SSL encryption in transit, AES-256 encryption at rest, multi-factor authentication for system access, regular security audits, and access controls. In the event of a breach we will notify affected users and the Data Protection Board within 72 hours." },
+        { h: "10. Contact & Grievance Officer", body: `Email: ${EMAIL} · Website: ${WEBSITE}\nWe respond within 30 days. Unresolved grievances may be escalated to the Data Protection Board of India.` },
+      ]
+    },
+    terms: {
+      title: "Terms of Use",
+      badge: "Governing Law: India",
+      updated: "16 March 2026",
+      sections: [
+        { h: "1. Acceptance of Terms", body: `By accessing or using Rentok at ${WEBSITE}, you agree to be bound by these Terms of Use. If you do not agree, you must not use the Service. These Terms form a legally binding agreement between you and Rentok.` },
+        { h: "2. Description of Service", bullets: ["Rent tracking and UPI payment collection", "WhatsApp payment reminders to tenants", "Tenant and property management dashboard", "Rental agreement generation", "Maintenance request management", "Financial reporting and P&L analytics"] },
+        { h: "3. Eligibility", body: "You must be at least 18 years of age and legally capable of entering contracts. The Service is intended for use within the Republic of India." },
+        { h: "4. Beta Access", bullets: ["Access is provided free of charge at our sole discretion", "Features may change or be removed without notice", "We do not guarantee availability, uptime, or data persistence during beta", "Beta access may be revoked at any time without prior notice", "Beta users agree to provide feedback to help improve the Service"] },
+        { h: "5. Acceptable Use", body: "You agree NOT to: use the Service unlawfully, upload false or fraudulent information, reverse engineer or copy the platform, scrape or harvest data, introduce malware, or impersonate any person. You agree to comply with all applicable Indian laws including tenancy laws and GST regulations." },
+        { h: "6. Intellectual Property", body: "All content, code, design, trademarks, and branding are the exclusive property of Rentok, protected under the Copyright Act, 1957 and Trade Marks Act, 1999. You may not copy, reproduce, or distribute without express written permission." },
+        { h: "7. Disclaimer of Warranties", body: 'The Service is provided "AS IS" without warranties of any kind. We do not warrant uninterrupted, error-free operation or accuracy of information provided through the Service.' },
+        { h: "8. Limitation of Liability", body: "Rentok shall not be liable for indirect, incidental, special, or consequential damages. Our total liability shall not exceed the amount paid by you in the three months preceding the claim." },
+        { h: "9. Governing Law & Disputes", body: "These Terms are governed by the laws of India. Disputes shall first be resolved through good-faith negotiation. If unresolved within 30 days, disputes are subject to the exclusive jurisdiction of courts in Bengaluru, Karnataka." },
+        { h: "10. Contact", body: `Email: ${EMAIL} · Website: ${WEBSITE}` },
+      ]
+    },
+    data: {
+      title: "Data Protection Policy",
+      badge: "DPDP Act 2023 · IT Act 2000",
+      updated: "16 March 2026",
+      sections: [
+        { h: "1. Purpose & Scope", body: "This policy establishes Rentok's commitment to protecting personal data. It applies to all data processed by Rentok including data of property owners, tenants, PG operators, and all platform users." },
+        { h: "2. Data Protection Principles", bullets: ["Lawfulness, fairness and transparency", "Purpose limitation — collected for specified purposes only", "Data minimisation — only necessary data is collected", "Accuracy — reasonable steps to keep data accurate", "Storage limitation — retained only as long as necessary", "Integrity and confidentiality — appropriate security maintained", "Accountability — Rentok is responsible for compliance"] },
+        { h: "3. Consent Management", body: "Rentok obtains free, specific, informed, and unambiguous consent before collecting personal data. Consent is obtained at registration and before any sensitive data collection. Users may withdraw consent at any time by contacting us. Property owners uploading tenant data must obtain written consent from tenants." },
+        { h: "4. Technical Security Measures", bullets: ["TLS 1.2+ encryption for all data in transit", "AES-256 encryption for stored data", "Multi-factor authentication for system access", "Regular automated encrypted backups", "Intrusion detection and continuous monitoring", "Regular penetration testing and security audits"] },
+        { h: "5. Third-Party Processors", bullets: ["Netlify (USA) — hosting · SOC 2 Type II certified", "Supabase (USA) — database & auth · SOC 2 compliant", "Google (USA) — forms & analytics · ISO 27001 certified", "Razorpay (India) — payments · PCI DSS compliant", "Interakt/Wati (India) — WhatsApp messaging"] },
+        { h: "6. Data Breach Response", bullets: ["Contain breach immediately and assess scope", "Notify Data Protection Board of India within 72 hours if harm likely", "Notify affected users without undue delay", "Maintain breach records", "Conduct post-breach review and implement corrective measures"] },
+        { h: "7. Retention Schedule", bullets: ["Account data: Until deletion + 90 days", "Payment records: 7 years (tax compliance)", "Rental agreements: 7 years (contract law)", "Communication logs: 6 months", "Security logs: 12 months", "Beta registration: 12 months"] },
+        { h: "8. Your Rights", body: `Access, correction, erasure, portability, objection, and grievance rights are available. All requests acknowledged within 7 days, resolved within 30 days. Contact: ${EMAIL}` },
+        { h: "9. Contact", body: `Email: ${EMAIL} · Website: ${WEBSITE}\nThis policy is reviewed annually or upon material changes to our data processing activities.` },
+      ]
+    }
+  };
+
+  if(["privacy","terms","data"].includes(screen)){
+    const doc = LEGAL[screen];
+    return(
+      <div style={{fontFamily:"'Nunito','Segoe UI',sans-serif",background:T.bg,color:T.ink,minHeight:"100vh"}}>
+        <style>{CSS}</style>
+        <nav style={{background:T.surface,borderBottom:`1.5px solid ${T.border}`,padding:"13px 28px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:100}}>
+          <div style={{display:"flex",alignItems:"center",gap:9}}>
+            <div style={{width:32,height:32,borderRadius:10,background:`linear-gradient(135deg,${T.saffron},${T.saffronB})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>🔑</div>
+            <div style={{fontWeight:900,fontSize:16,color:T.ink,letterSpacing:-.4}}>Rentok</div>
+          </div>
+          <button onClick={()=>setScreen("landing")} style={{background:T.panel,border:`1.5px solid ${T.border2}`,borderRadius:10,padding:"7px 15px",fontSize:13,fontWeight:700,color:T.ink2,cursor:"pointer"}}>← Back</button>
+        </nav>
+
+        <div style={{maxWidth:760,margin:"0 auto",padding:"40px 28px 80px"}}>
+          {/* Header */}
+          <div style={{marginBottom:36}}>
+            <span style={{background:T.tealL,color:T.teal,fontSize:11,fontWeight:800,padding:"3px 10px",borderRadius:20,letterSpacing:.5}}>{doc.badge}</span>
+            <h1 style={{fontSize:32,fontWeight:900,color:T.ink,letterSpacing:-.8,margin:"12px 0 8px"}}>{doc.title}</h1>
+            <div style={{fontSize:13,color:T.muted}}>Effective date: {doc.updated} · <a href={`mailto:${EMAIL}`} style={{color:T.saffron,fontWeight:700,textDecoration:"none"}}>{EMAIL}</a></div>
+          </div>
+
+          {/* Quick nav */}
+          <div style={{background:T.panel,borderRadius:14,padding:"16px 20px",marginBottom:36,border:`1.5px solid ${T.border}`}}>
+            <div style={{fontSize:11,fontWeight:800,color:T.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:10}}>Contents</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+              {doc.sections.map((s,i)=>(
+                <span key={i} style={{fontSize:12,color:T.ink2,background:T.surface,border:`1px solid ${T.border}`,borderRadius:20,padding:"4px 12px",cursor:"default"}}>{s.h}</span>
+              ))}
+            </div>
+          </div>
+
+          {/* Sections */}
+          {doc.sections.map((s,i)=>(
+            <div key={i} style={{marginBottom:32}}>
+              <h2 style={{fontSize:17,fontWeight:900,color:T.ink,letterSpacing:-.3,marginBottom:10,paddingBottom:8,borderBottom:`2px solid ${T.saffron}25`}}>{s.h}</h2>
+              {s.body && s.body.split("\n").map((line,j)=>(
+                <p key={j} style={{fontSize:14,color:T.ink2,lineHeight:1.75,marginBottom:8}}>{line}</p>
+              ))}
+              {s.bullets && (
+                <ul style={{paddingLeft:0,margin:0,listStyle:"none"}}>
+                  {s.bullets.map((b,j)=>(
+                    <li key={j} style={{display:"flex",gap:10,alignItems:"flex-start",marginBottom:8}}>
+                      <span style={{color:T.saffron,fontWeight:900,fontSize:14,flexShrink:0,marginTop:1}}>•</span>
+                      <span style={{fontSize:14,color:T.ink2,lineHeight:1.7}}>{b}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+
+          {/* Other docs */}
+          <div style={{background:T.panel,borderRadius:16,padding:"20px 24px",border:`1.5px solid ${T.border}`,marginTop:40}}>
+            <div style={{fontSize:13,fontWeight:800,color:T.ink,marginBottom:12}}>Also read</div>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+              {[["privacy","🔒 Privacy Policy"],["terms","📋 Terms of Use"],["data","🛡️ Data Protection"]].filter(([s])=>s!==screen).map(([s,l])=>(
+                <button key={s} onClick={()=>setScreen(s)} style={{padding:"8px 16px",borderRadius:10,border:`1.5px solid ${T.border2}`,background:T.surface,color:T.ink2,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{l}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <footer style={{borderTop:`1.5px solid ${T.border}`,padding:"18px 28px",textAlign:"center",fontSize:11,color:T.muted}}>
+          © 2026 Rentok · Made in India 🇮🇳 · <a href={`mailto:${EMAIL}`} style={{color:T.saffron,fontWeight:700,textDecoration:"none"}}>{EMAIL}</a>
+        </footer>
+      </div>
+    );
+  }
+
   // ── LANDING ──────────────────────────────────────────────────
   return(
     <div style={{fontFamily:"'Nunito','Segoe UI',sans-serif",background:T.bg,color:T.ink,minHeight:"100vh",overflowX:"hidden"}}>
@@ -756,7 +881,9 @@ export default function App(){
         </div>
         <div style={{fontSize:11,color:T.muted,textAlign:"center"}}>© 2025 Rentok · Made in India 🇮🇳<br/><a href="mailto:rentoksupport@gmail.com" style={{color:T.saffron,fontWeight:700,textDecoration:"none",fontSize:11}}>rentoksupport@gmail.com</a></div>
         <div style={{display:"flex",gap:16}}>
-          {["Privacy","Terms"].map(l=><button key={l} style={{background:"none",border:"none",color:T.muted,fontSize:11,fontWeight:700,cursor:"pointer"}}>{l}</button>)}
+          {[["Privacy","privacy"],["Terms","terms"],["Data Policy","data"]].map(([l,s])=>(
+            <button key={s} onClick={()=>setScreen(s)} style={{background:"none",border:"none",color:T.muted,fontSize:11,fontWeight:700,cursor:"pointer"}}>{l}</button>
+          ))}
           <a href="mailto:rentoksupport@gmail.com" style={{color:T.muted,fontSize:11,fontWeight:700,textDecoration:"none"}}>Contact</a>
         </div>
       </footer>
