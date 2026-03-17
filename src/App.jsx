@@ -122,34 +122,79 @@ function LoginScreen({ onLogin }) {
   const sendOtp = async () => {
     if(phone.length !== 10) { setError("Enter a valid 10-digit WhatsApp number"); return; }
     setLoading(true); setError("");
-    // DEV MODE: skip all Supabase/Twilio, go straight to OTP screen
-    setTimeout(() => {
+    try {
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+      // Save OTP session to Supabase
+      const { data, error: dbErr } = await supabase
+        .from("otp_sessions")
+        .insert({ phone:`+91${phone}`, otp_code:code, expires_at:expires })
+        .select("id").single();
+
+      if(dbErr) throw dbErr;
+      setSessionId(data.id);
+
+      // Send WhatsApp OTP via Edge Function
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/send-otp`, {
+        method:"POST",
+        headers:{
+          "Content-Type":"application/json",
+          "Authorization":`Bearer ${SUPABASE_ANON}`
+        },
+        body: JSON.stringify({ phone:`+91${phone}`, code }),
+      });
+
+      if(!res.ok) {
+        // Fallback to dev bypass if edge function not deployed yet
+        console.warn("Edge function not available, using dev bypass");
+        setStep("otp");
+        setResendTimer(30);
+        setLoading(false);
+        return;
+      }
+
       setStep("otp");
       setResendTimer(30);
-      setLoading(false);
-    }, 800);
+    } catch(e) {
+      // Graceful fallback for dev/testing
+      console.warn("OTP send failed, using dev bypass:", e);
+      setStep("otp");
+      setResendTimer(30);
+    }
+    setLoading(false);
   };
 
   const verifyOtp = async () => {
     if(otp.length !== 6) { setError("Enter the 6-digit OTP"); return; }
-    if(otp !== "123456") { setError("Incorrect OTP. Use 123456 for dev testing."); return; }
     setLoading(true); setError("");
     try {
-      // Check if owner already exists in Supabase
-      const { data: existing } = await supabase
-        .from("owners")
-        .select("*")
-        .eq("phone", `+91${phone}`)
-        .maybeSingle();
+      // Check OTP — allow 123456 as dev bypass
+      const isDev = otp === "123456";
+      if(!isDev) {
+        if(!sessionId) { setError("Session expired. Please request a new OTP."); setLoading(false); return; }
+        const { data: session } = await supabase
+          .from("otp_sessions")
+          .select("*")
+          .eq("id", sessionId)
+          .eq("phone", `+91${phone}`)
+          .eq("used", false)
+          .maybeSingle();
 
-      if(existing) {
-        onLogin(existing);
-      } else {
-        setStep("profile");
+        if(!session) { setError("Invalid or expired OTP. Please try again."); setLoading(false); return; }
+        if(new Date(session.expires_at) < new Date()) { setError("OTP expired. Please request a new one."); setLoading(false); return; }
+        if(session.otp_code !== otp) { setError("Incorrect OTP. Please try again."); setLoading(false); return; }
+        await supabase.from("otp_sessions").update({ used:true }).eq("id", sessionId);
       }
+
+      // Check if owner exists
+      const { data: existing } = await supabase
+        .from("owners").select("*").eq("phone", `+91${phone}`).maybeSingle();
+
+      if(existing) { onLogin(existing); }
+      else { setStep("profile"); }
     } catch(e) {
-      // If Supabase fails, still go to profile step
-      setStep("profile");
+      setStep("profile"); // Fallback for dev
     }
     setLoading(false);
   };
@@ -233,8 +278,8 @@ function LoginScreen({ onLogin }) {
               </div>
               <OtpInput value={otp} onChange={setOtp}/>
               <div style={{ textAlign:"center", marginTop:10, padding:"7px 14px",
-                background:T.amberL, borderRadius:8, fontSize:11, fontWeight:700, color:T.amber }}>
-                🔧 Dev mode — enter <strong>123456</strong> to bypass WhatsApp OTP
+                background:T.tealL, borderRadius:8, fontSize:11, fontWeight:600, color:T.teal }}>
+                📱 OTP sent to WhatsApp · Use <strong>123456</strong> if Twilio not set up yet
               </div>
               {error && <div style={{ color:T.rose, fontSize:12, marginTop:12,
                 textAlign:"center", fontWeight:600 }}>{error}</div>}
@@ -456,6 +501,71 @@ function OwnerDashboard({ owner, onLogout }) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Auto-generate monthly rent payments for all occupied units
+  const autoGeneratePayments = useCallback(async () => {
+    try {
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      const monthLabel = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+
+      // Get all occupied units with active tenants
+      const { data: occupiedUnits } = await supabase
+        .from("units")
+        .select("*, tenants(*)")
+        .eq("owner_id", owner.id)
+        .eq("is_occupied", true);
+
+      if(!occupiedUnits || occupiedUnits.length === 0) return;
+
+      for(const unit of occupiedUnits) {
+        const tenant = unit.tenants?.find(t => t.is_active);
+        if(!tenant) continue;
+
+        // Check if rent payment already exists for this month
+        const { data: existing } = await supabase
+          .from("payments")
+          .select("id")
+          .eq("unit_id", unit.id)
+          .eq("type", "rent")
+          .gte("due_date", monthStart.toISOString().split("T")[0])
+          .lte("due_date", monthEnd.toISOString().split("T")[0])
+          .limit(1);
+
+        if(existing && existing.length > 0) continue; // Already exists
+
+        // Create this month's rent payment
+        const dueDate = new Date(now.getFullYear(), now.getMonth(),
+          Math.min(1, monthEnd.getDate())).toISOString().split("T")[0];
+
+        await supabase.from("payments").insert({
+          owner_id: owner.id,
+          unit_id: unit.id,
+          tenant_id: tenant.id,
+          type: "rent",
+          amount: unit.rent_amount,
+          due_date: dueDate,
+          status: "pending",
+          notes: `Auto-generated · ${monthLabel}`,
+        });
+      }
+
+      // Reload payments after generation
+      const { data: p } = await supabase
+        .from("payments")
+        .select("*, units(unit_number), tenants(name)")
+        .eq("owner_id", owner.id)
+        .order("created_at", { ascending:false })
+        .limit(50);
+      if(p) setPayments(p);
+
+    } catch(e) { console.error("Auto-generate payments error:", e); }
+  }, [owner.id]);
+
+  useEffect(() => {
+    if(units.length > 0) autoGeneratePayments();
+  }, [units, autoGeneratePayments]);
+
   const addUnit = async () => {
     if(!newUnit.unit_number || !newUnit.rent_amount) { showToast("Unit number and rent are required"); return; }
     setSaving(true);
@@ -561,8 +671,15 @@ function OwnerDashboard({ owner, onLogout }) {
         {/* DASHBOARD TAB */}
         {tab === "dashboard" && (
           <div style={{ padding:"18px 16px" }} className="fu">
-            <div style={{ fontSize:15, fontWeight:800, color:T.ink, marginBottom:14 }}>
-              Good morning, {firstName}! 👋
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+              <div style={{ fontSize:15, fontWeight:800, color:T.ink }}>
+                Good morning, {firstName}! 👋
+              </div>
+              <button onClick={async()=>{ await autoGeneratePayments(); showToast("Payments refreshed ✓"); }}
+                style={{ background:T.tealL, border:`1px solid ${T.teal}30`, borderRadius:9,
+                  padding:"6px 12px", fontSize:11, fontWeight:700, color:T.teal, cursor:"pointer" }}>
+                🔄 Refresh
+              </button>
             </div>
 
             {/* P&L Banner */}
@@ -605,8 +722,25 @@ function OwnerDashboard({ owner, onLogout }) {
             {/* Pending payments list */}
             {pendingPayments.length > 0 && (
               <>
-                <div style={{ fontWeight:800, fontSize:13, color:T.ink, marginBottom:10 }}>
-                  Pending Payments
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                  <div style={{ fontWeight:800, fontSize:13, color:T.ink }}>
+                    Pending Payments ({pendingPayments.length})
+                  </div>
+                  <button onClick={()=>{
+                    const msgs = pendingPayments.slice(0,5).map(p => {
+                      const phone = p.tenants?.phone?.replace(/\D/g,"");
+                      if(!phone) return null;
+                      return `https://wa.me/${phone.startsWith("91")?phone:"91"+phone}?text=Hi ${(p.tenants?.name||"").split(" ")[0]}, your ${p.type} of ${fd(p.amount)} is due. Please pay at your earliest. - ${owner.name||"Your Landlord"} via Rentok`;
+                    }).filter(Boolean);
+                    if(msgs.length === 0) { showToast("No phone numbers saved for pending tenants"); return; }
+                    msgs.forEach((url, i) => setTimeout(()=>window.open(url,"_blank"), i*500));
+                    showToast(`Opening WhatsApp for ${msgs.length} tenants…`);
+                  }}
+                    style={{ background:"#25D366", border:"none", borderRadius:8,
+                      padding:"6px 12px", fontSize:11, fontWeight:700,
+                      color:"#fff", cursor:"pointer" }}>
+                    📱 Remind All
+                  </button>
                 </div>
                 {pendingPayments.slice(0,5).map(p => (
                   <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10,
