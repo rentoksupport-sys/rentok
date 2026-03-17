@@ -336,9 +336,13 @@ function LoginScreen({ onLogin }) {
       if(readErr) { setError("DB read error: " + readErr.message); setLoading(false); return; }
 
       const session = sessions?.[0];
-      if(!session) { setError("OTP not found. Please tap 'Resend OTP' and try again."); setLoading(false); return; }
+      if(!session) { setError(`No session found. otpSentAt=${otpSentAt} sessions=${JSON.stringify(sessions)}`); setLoading(false); return; }
       if(new Date(session.expires_at) < new Date()) { setError("OTP expired. Please request a new one."); setLoading(false); return; }
-      if(String(session.otp_code).trim() !== String(otp).trim()) { setError("Incorrect OTP. Please try again."); setLoading(false); return; }
+      // DEBUG: show both values
+      if(String(session.otp_code).trim() !== String(otp).trim()) {
+        setError(`Mismatch — DB has: "${session.otp_code}" (${typeof session.otp_code}), you entered: "${otp}" (${typeof otp})`);
+        setLoading(false); return;
+      }
 
       await supabase.from("otp_sessions").update({ used: true }).eq("id", session.id);
 
