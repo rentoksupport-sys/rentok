@@ -102,11 +102,12 @@ const OtpInput = ({ value, onChange }) => (
 // LOGIN SCREEN
 // ══════════════════════════════════════════════════════════════
 function LoginScreen({ onLogin }) {
-  const [step, setStep] = useState("phone"); // phone | otp | profile
+  const [step, setStep] = useState("phone"); // phone | otp | role | profile
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [name, setName] = useState("");
   const [city, setCity] = useState("Bengaluru");
+  const [role, setRole] = useState("owner"); // owner | tenant
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [resendTimer, setResendTimer] = useState(0);
@@ -178,11 +179,19 @@ function LoginScreen({ onLogin }) {
       }
 
       // Check if owner exists
-      const { data: existing } = await supabase
+      const { data: existingOwner } = await supabase
         .from("owners").select("*").eq("phone", `+91${phone}`).maybeSingle();
 
-      if(existing) { onLogin(existing); }
-      else { setStep("profile"); }
+      if(existingOwner) { onLogin({ type:"owner", ...existingOwner }); return; }
+
+      // Check if tenant exists
+      const { data: existingTenant } = await supabase
+        .from("tenants").select("*, units(*, properties(*))").eq("phone", `+91${phone}`).eq("is_active", true).maybeSingle();
+
+      if(existingTenant) { onLogin({ type:"tenant", ...existingTenant }); return; }
+
+      // New user — ask for role first
+      setStep("role");
     } catch(e) {
       setStep("profile"); // Fallback for dev
     }
@@ -194,13 +203,22 @@ function LoginScreen({ onLogin }) {
     if(!name.trim()) { setError("Please enter your name"); return; }
     setLoading(true); setError("");
     try {
-      const { data: owner, error: insertErr } = await supabase
-        .from("owners")
-        .insert({ phone:`+91${phone}`, name:name.trim(), city, beta_user:true })
-        .select("*").single();
-
-      if(insertErr) throw insertErr;
-      onLogin(owner);
+      if(role === "owner") {
+        const { data: owner, error: insertErr } = await supabase
+          .from("owners")
+          .insert({ phone:`+91${phone}`, name:name.trim(), city, beta_user:true })
+          .select("*").single();
+        if(insertErr) throw insertErr;
+        onLogin({ type:"owner", ...owner });
+      } else {
+        // Tenant self-registration — no unit assigned yet
+        const { data: tenant, error: insertErr } = await supabase
+          .from("tenants")
+          .insert({ phone:`+91${phone}`, name:name.trim(), is_active:true, owner_id:null })
+          .select("*").single();
+        if(insertErr) throw insertErr;
+        onLogin({ type:"tenant", ...tenant });
+      }
     } catch(e) {
       setError("Could not create profile. Please try again.");
     }
@@ -301,27 +319,50 @@ function LoginScreen({ onLogin }) {
             </>
           )}
 
+          {/* STEP: ROLE */}
+          {step === "role" && (
+            <>
+              <div style={{ fontSize:18, fontWeight:900, color:T.ink, marginBottom:6 }}>Welcome to Rentok! 🎉</div>
+              <div style={{ fontSize:13, color:T.muted, marginBottom:24 }}>Are you a property owner or a tenant?</div>
+              <div style={{ display:"flex", gap:12, marginBottom:20 }}>
+                {[["owner","🏢","Property Owner","Manage flats & collect rent"],
+                  ["tenant","🏠","Tenant","View bills & pay rent"]].map(([v,icon,label,sub])=>(
+                  <button key={v} onClick={()=>setRole(v)}
+                    style={{ flex:1, padding:"16px 8px", borderRadius:14,
+                      border:`2px solid ${role===v?T.saffron:T.border2}`,
+                      background:role===v?T.saffronL:T.panel,
+                      cursor:"pointer", fontFamily:"inherit", textAlign:"center", transition:"all .15s" }}>
+                    <div style={{ fontSize:28, marginBottom:6 }}>{icon}</div>
+                    <div style={{ fontSize:13, fontWeight:800, color:role===v?T.saffron:T.ink }}>{label}</div>
+                    <div style={{ fontSize:10, color:T.muted, marginTop:3 }}>{sub}</div>
+                  </button>
+                ))}
+              </div>
+              <button onClick={()=>setStep("profile")}
+                style={{ width:"100%", padding:14, background:`linear-gradient(135deg,${T.saffron},${T.saffronB})`,
+                  border:"none", borderRadius:12, fontSize:15, fontWeight:800, color:"#fff", cursor:"pointer" }}>
+                Continue as {role==="owner"?"Owner":"Tenant"} →
+              </button>
+            </>
+          )}
+
           {/* STEP: PROFILE (first time) */}
           {step === "profile" && (
             <>
               <div style={{ fontSize:18, fontWeight:900, color:T.ink, marginBottom:6 }}>
-                Welcome to Rentok! 🎉
+                {role==="owner"?"Set up your account":"Almost there!"} 🎉
               </div>
-              <div style={{ fontSize:13, color:T.muted, marginBottom:24 }}>
-                Quick setup — takes 30 seconds
-              </div>
+              <div style={{ fontSize:13, color:T.muted, marginBottom:24 }}>Quick setup — takes 30 seconds</div>
               {[
                 { label:"Your Name", key:"name", value:name, set:setName, placeholder:"e.g. Suresh Rao" },
-                { label:"City", key:"city", value:city, set:setCity, placeholder:"e.g. Bengaluru" },
+                ...(role==="owner"?[{ label:"City", key:"city", value:city, set:setCity, placeholder:"e.g. Bengaluru" }]:[]),
               ].map(f => (
                 <div key={f.key} style={{ marginBottom:14 }}>
                   <div style={{ fontSize:11, fontWeight:700, color:T.muted, letterSpacing:.5,
                     textTransform:"uppercase", marginBottom:6 }}>{f.label}</div>
-                  <input value={f.value} onChange={e=>f.set(e.target.value)}
-                    placeholder={f.placeholder}
+                  <input value={f.value} onChange={e=>f.set(e.target.value)} placeholder={f.placeholder}
                     style={{ width:"100%", background:T.panel, border:`1.5px solid ${T.border2}`,
-                      color:T.ink, borderRadius:10, padding:"11px 14px", fontSize:14,
-                      fontWeight:600 }}/>
+                      color:T.ink, borderRadius:10, padding:"11px 14px", fontSize:14, fontWeight:600 }}/>
                 </div>
               ))}
               {error && <div style={{ color:T.rose, fontSize:12, marginBottom:8, fontWeight:600 }}>{error}</div>}
@@ -1045,36 +1086,386 @@ function OwnerDashboard({ owner, onLogout }) {
 }
 
 // ══════════════════════════════════════════════════════════════
+// TENANT DASHBOARD
+// ══════════════════════════════════════════════════════════════
+function TenantDashboard({ tenant, onLogout }) {
+  const [tab, setTab] = useState("home");
+  const [payments, setPayments] = useState([]);
+  const [requests, setRequests] = useState([]);
+  const [unit, setUnit] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState(null);
+  const [newReq, setNewReq] = useState({ title:"", description:"", priority:"medium" });
+  const [submitting, setSubmitting] = useState(false);
+
+  const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(null), 3000); };
+  const firstName = (tenant.name||"").split(" ")[0] || "there";
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        const [{ data: p }, { data: r }, { data: u }] = await Promise.all([
+          supabase.from("payments").select("*")
+            .eq("tenant_id", tenant.id)
+            .order("created_at", { ascending:false }),
+          supabase.from("maintenance_requests").select("*, units(unit_number)")
+            .eq("tenant_id", tenant.id)
+            .order("created_at", { ascending:false }),
+          tenant.unit_id ? supabase.from("units").select("*, properties(name, address)").eq("id", tenant.unit_id).single() : { data:null },
+        ]);
+        setPayments(p || []);
+        setRequests(r || []);
+        setUnit(u);
+      } catch(e) { console.error(e); }
+      setLoading(false);
+    };
+    load();
+  }, [tenant.id, tenant.unit_id]);
+
+  const submitRequest = async () => {
+    if(!newReq.title.trim()) { showToast("Please describe the issue"); return; }
+    setSubmitting(true);
+    try {
+      await supabase.from("maintenance_requests").insert({
+        tenant_id: tenant.id,
+        unit_id: tenant.unit_id || null,
+        owner_id: tenant.owner_id || null,
+        title: newReq.title.trim(),
+        description: newReq.description.trim(),
+        priority: newReq.priority,
+        status: "open",
+      });
+      setNewReq({ title:"", description:"", priority:"medium" });
+      showToast("Request submitted ✓");
+      const { data: r } = await supabase.from("maintenance_requests")
+        .select("*, units(unit_number)").eq("tenant_id", tenant.id)
+        .order("created_at", { ascending:false });
+      setRequests(r || []);
+    } catch(e) { showToast("Failed to submit. Try again."); }
+    setSubmitting(false);
+  };
+
+  const pending = payments.filter(p => p.status === "pending");
+  const paid = payments.filter(p => p.status === "paid");
+  const totalDue = pending.reduce((s,p) => s + Number(p.amount), 0);
+
+  const generateReceipt = (p) => {
+    const lines = [
+      "RENTOK PAYMENT RECEIPT",
+      "─────────────────────────",
+      `Tenant: ${tenant.name}`,
+      `Unit: ${unit?.unit_number || "—"}`,
+      `Type: ${p.type}`,
+      `Amount: ${fd(p.amount)}`,
+      `Due Date: ${fmt(p.due_date)}`,
+      `Paid Date: ${fmt(p.paid_date)}`,
+      `Status: ${p.status.toUpperCase()}`,
+      "─────────────────────────",
+      "Powered by Rentok",
+    ].join("\n");
+    const blob = new Blob([lines], { type:"text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `Rentok_Receipt_${p.type}_${p.due_date}.txt`;
+    a.click(); URL.revokeObjectURL(url);
+    showToast("Receipt downloaded ✓");
+  };
+
+  const tabs = [
+    { id:"home", icon:"🏠", label:"Home" },
+    { id:"payments", icon:"💳", label:"Payments" },
+    { id:"requests", icon:"🔧", label:"Requests" },
+  ];
+
+  if(loading) return (
+    <div style={{ fontFamily:"'Nunito','Segoe UI',sans-serif", background:T.bg,
+      minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:14 }}>
+      <style>{CSS}</style>
+      <Spinner/>
+      <div style={{ fontSize:13, color:T.muted, fontWeight:600 }}>Loading your portal…</div>
+    </div>
+  );
+
+  return (
+    <div style={{ fontFamily:"'Nunito','Segoe UI',sans-serif", background:T.bg,
+      color:T.ink, minHeight:"100vh", display:"flex", flexDirection:"column", maxWidth:520, margin:"0 auto" }}>
+      <style>{CSS}</style>
+
+      {/* Top bar */}
+      <div style={{ background:T.surface, borderBottom:`1.5px solid ${T.border}`,
+        padding:"11px 16px", display:"flex", alignItems:"center",
+        justifyContent:"space-between", position:"sticky", top:0, zIndex:50 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <div style={{ width:30, height:30, borderRadius:9,
+            background:`linear-gradient(135deg,${T.teal},${T.tealB})`,
+            display:"flex", alignItems:"center", justifyContent:"center", fontSize:15 }}>🏠</div>
+          <div>
+            <div style={{ fontWeight:900, fontSize:14, color:T.ink, letterSpacing:-.3 }}>Rentok</div>
+            <div style={{ fontSize:9, color:T.muted }}>{tenant.name} · Tenant Portal</div>
+          </div>
+        </div>
+        <button onClick={onLogout}
+          style={{ background:T.panel, border:`1.5px solid ${T.border}`,
+            borderRadius:8, padding:"5px 12px", fontSize:11, fontWeight:700,
+            color:T.muted, cursor:"pointer" }}>Logout</button>
+      </div>
+
+      <div style={{ flex:1, overflowY:"auto", paddingBottom:72 }}>
+
+        {/* HOME TAB */}
+        {tab === "home" && (
+          <div style={{ padding:"18px 16px" }} className="fu">
+            <div style={{ fontSize:15, fontWeight:800, color:T.ink, marginBottom:14 }}>
+              Hi {firstName}! 👋
+            </div>
+
+            {/* Unit info */}
+            {unit ? (
+              <div style={{ background:`linear-gradient(135deg,${T.teal},${T.tealB})`,
+                borderRadius:18, padding:20, marginBottom:18, color:"#fff" }}>
+                <div style={{ fontSize:10, fontWeight:700, opacity:.8, letterSpacing:.5, marginBottom:3 }}>
+                  YOUR UNIT
+                </div>
+                <div style={{ fontSize:24, fontWeight:900, letterSpacing:-.8, marginBottom:4 }}>
+                  {unit.unit_number}
+                </div>
+                {unit.properties?.name && (
+                  <div style={{ fontSize:12, opacity:.85 }}>{unit.properties.name}</div>
+                )}
+                <div style={{ display:"flex", gap:16, marginTop:10 }}>
+                  {[["Rent", fd(unit.rent_amount)+"/mo"], ["Deposit", fd(unit.deposit)], ["Due", fd(totalDue)]].map(([l,v])=>(
+                    <div key={l}><div style={{ fontSize:9, opacity:.75 }}>{l}</div><div style={{ fontSize:13, fontWeight:800 }}>{v}</div></div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div style={{ background:T.panel, borderRadius:16, padding:16, marginBottom:18,
+                border:`1.5px solid ${T.border}`, textAlign:"center" }}>
+                <div style={{ fontSize:13, color:T.muted }}>No unit assigned yet. Your landlord will link your account.</div>
+              </div>
+            )}
+
+            {/* Pending bills */}
+            {pending.length > 0 && (
+              <>
+                <div style={{ fontWeight:800, fontSize:13, color:T.ink, marginBottom:10 }}>
+                  Pending Bills ({pending.length})
+                </div>
+                {pending.map(p => (
+                  <div key={p.id} style={{ background:T.card, border:`1.5px solid ${T.rose}25`,
+                    borderRadius:13, padding:"12px 14px", marginBottom:10 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+                      <div>
+                        <div style={{ fontSize:13, fontWeight:700, color:T.ink, textTransform:"capitalize" }}>{p.type}</div>
+                        <div style={{ fontSize:11, color:T.muted }}>Due: {fmt(p.due_date)}</div>
+                      </div>
+                      <div style={{ fontSize:18, fontWeight:900, color:T.rose }}>{fd(p.amount)}</div>
+                    </div>
+                    <a href={`upi://pay?pa=rentoksupport@oksbi&pn=Rentok&am=${p.amount}&cu=INR&tn=${p.type} - ${tenant.name}`}
+                      style={{ display:"block", width:"100%", padding:"9px",
+                        background:`linear-gradient(135deg,${T.saffron},${T.saffronB})`,
+                        border:"none", borderRadius:9, fontSize:13, fontWeight:800,
+                        color:"#fff", textAlign:"center", textDecoration:"none" }}>
+                      💳 Pay {fd(p.amount)} via UPI
+                    </a>
+                  </div>
+                ))}
+              </>
+            )}
+
+            {pending.length === 0 && (
+              <div style={{ background:T.tealL, border:`1px solid ${T.teal}25`,
+                borderRadius:14, padding:"20px 16px", textAlign:"center", marginTop:8 }}>
+                <div style={{ fontSize:24, marginBottom:8 }}>✅</div>
+                <div style={{ fontSize:14, fontWeight:800, color:T.teal }}>All caught up!</div>
+                <div style={{ fontSize:12, color:T.muted, marginTop:4 }}>No pending bills</div>
+              </div>
+            )}
+
+            {/* Tenancy details */}
+            <div style={{ background:T.card, border:`1.5px solid ${T.border}`,
+              borderRadius:14, padding:16, marginTop:18 }}>
+              <div style={{ fontSize:12, fontWeight:800, color:T.ink, marginBottom:12 }}>📋 Tenancy Details</div>
+              {[
+                ["Name", tenant.name],
+                ["Phone", tenant.phone || "—"],
+                ["Move-in", fmt(tenant.move_in_date)],
+                ["Lease ends", fmt(tenant.lease_end)],
+              ].map(([l,v]) => (
+                <div key={l} style={{ display:"flex", justifyContent:"space-between", marginBottom:8, fontSize:12 }}>
+                  <span style={{ color:T.muted, fontWeight:600 }}>{l}</span>
+                  <span style={{ color:T.ink, fontWeight:700 }}>{v}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* PAYMENTS TAB */}
+        {tab === "payments" && (
+          <div style={{ padding:"18px 16px" }} className="fu">
+            <div style={{ fontWeight:800, fontSize:15, color:T.ink, marginBottom:14 }}>Payment History</div>
+
+            {payments.length === 0 && (
+              <div style={{ textAlign:"center", padding:"40px 20px", color:T.muted }}>
+                <div style={{ fontSize:32, marginBottom:10 }}>💳</div>
+                <div style={{ fontSize:14, fontWeight:700 }}>No payments yet</div>
+              </div>
+            )}
+
+            {payments.map(p => (
+              <div key={p.id} style={{ background:T.card, border:`1.5px solid ${T.border}`,
+                borderRadius:13, padding:"12px 14px", marginBottom:10 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"start", marginBottom:6 }}>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:700, color:T.ink, textTransform:"capitalize" }}>{p.type}</div>
+                    <div style={{ fontSize:11, color:T.muted }}>Due: {fmt(p.due_date)}</div>
+                    {p.paid_date && <div style={{ fontSize:11, color:T.teal }}>Paid: {fmt(p.paid_date)}</div>}
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ fontSize:15, fontWeight:900, color:T.ink }}>{fd(p.amount)}</div>
+                    <Chip label={p.status} color={p.status==="paid"?T.teal:p.status==="overdue"?T.rose:T.amber}/>
+                  </div>
+                </div>
+                <div style={{ display:"flex", gap:8, marginTop:8 }}>
+                  {p.status === "pending" && (
+                    <a href={`upi://pay?pa=rentoksupport@oksbi&pn=Rentok&am=${p.amount}&cu=INR`}
+                      style={{ flex:2, padding:"7px", background:T.saffron, border:"none",
+                        borderRadius:8, fontSize:12, fontWeight:700, color:"#fff",
+                        textAlign:"center", textDecoration:"none", display:"block" }}>
+                      Pay via UPI
+                    </a>
+                  )}
+                  {p.status === "paid" && (
+                    <button onClick={()=>generateReceipt(p)}
+                      style={{ flex:1, padding:"7px", background:T.tealL,
+                        border:`1px solid ${T.teal}30`, borderRadius:8,
+                        fontSize:12, fontWeight:700, color:T.teal, cursor:"pointer" }}>
+                      ⬇ Receipt
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* REQUESTS TAB */}
+        {tab === "requests" && (
+          <div style={{ padding:"18px 16px" }} className="fu">
+            <div style={{ fontWeight:800, fontSize:15, color:T.ink, marginBottom:14 }}>Maintenance</div>
+
+            {/* New request form */}
+            <div style={{ background:T.surface, border:`1.5px solid ${T.border}`,
+              borderRadius:16, padding:16, marginBottom:18 }}>
+              <div style={{ fontSize:13, fontWeight:800, color:T.ink, marginBottom:12 }}>+ New Request</div>
+              <input value={newReq.title} onChange={e=>setNewReq(p=>({...p,title:e.target.value}))}
+                placeholder="e.g. Leaking tap in bathroom"
+                style={{ width:"100%", background:T.panel, border:`1.5px solid ${T.border2}`,
+                  color:T.ink, borderRadius:10, padding:"10px 13px", fontSize:13,
+                  fontWeight:600, marginBottom:10, boxSizing:"border-box" }}/>
+              <textarea value={newReq.description} onChange={e=>setNewReq(p=>({...p,description:e.target.value}))}
+                placeholder="Describe the issue in detail..."
+                rows={2}
+                style={{ width:"100%", background:T.panel, border:`1.5px solid ${T.border2}`,
+                  color:T.ink, borderRadius:10, padding:"10px 13px", fontSize:13,
+                  fontWeight:600, marginBottom:10, boxSizing:"border-box",
+                  resize:"none", fontFamily:"inherit" }}/>
+              <div style={{ display:"flex", gap:7, marginBottom:12 }}>
+                {[["low","🟢 Low"],["medium","🟡 Medium"],["high","🔴 High"]].map(([v,l])=>(
+                  <button key={v} onClick={()=>setNewReq(p=>({...p,priority:v}))}
+                    style={{ flex:1, padding:"7px 4px", borderRadius:9,
+                      border:`1.5px solid ${newReq.priority===v?T.saffron:T.border2}`,
+                      background:newReq.priority===v?T.saffronL:T.panel,
+                      color:newReq.priority===v?T.saffron:T.muted,
+                      fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>{l}</button>
+                ))}
+              </div>
+              <button onClick={submitRequest} disabled={submitting}
+                style={{ width:"100%", padding:"10px", background:T.saffron, border:"none",
+                  borderRadius:10, fontSize:13, fontWeight:800, color:"#fff",
+                  cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+                {submitting ? <Spinner/> : "Submit Request →"}
+              </button>
+            </div>
+
+            {/* Request history */}
+            {requests.length === 0 && (
+              <div style={{ textAlign:"center", padding:"24px 20px", color:T.muted }}>
+                <div style={{ fontSize:13, fontWeight:700 }}>No requests yet</div>
+              </div>
+            )}
+            {requests.map(r => (
+              <div key={r.id} style={{ background:T.card, border:`1.5px solid ${T.border}`,
+                borderRadius:13, padding:"12px 14px", marginBottom:10 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"start", marginBottom:4 }}>
+                  <div style={{ flex:1, marginRight:8 }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:T.ink }}>{r.title}</div>
+                    <div style={{ fontSize:11, color:T.muted, marginTop:2 }}>{fmt(r.created_at)}</div>
+                  </div>
+                  <Chip label={r.status} color={r.status==="resolved"?T.teal:r.status==="in_progress"?T.amber:T.rose}/>
+                </div>
+                {r.description && (
+                  <div style={{ fontSize:12, color:T.ink2, marginTop:6, lineHeight:1.5 }}>{r.description}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Bottom nav */}
+      <div style={{ position:"fixed", bottom:0, left:0, right:0, maxWidth:520,
+        margin:"0 auto", background:T.surface, borderTop:`1.5px solid ${T.border}`,
+        display:"flex", zIndex:50 }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={()=>setTab(t.id)}
+            style={{ flex:1, padding:"9px 4px 10px", background:"none", border:"none",
+              display:"flex", flexDirection:"column", alignItems:"center", gap:2,
+              cursor:"pointer", color:tab===t.id?T.teal:T.muted, fontFamily:"inherit",
+              borderTop:`2.5px solid ${tab===t.id?T.teal:"transparent"}`,
+              transition:"all .15s" }}>
+            <span style={{ fontSize:15 }}>{t.icon}</span>
+            <span style={{ fontSize:8, fontWeight:800 }}>{t.label}</span>
+          </button>
+        ))}
+      </div>
+      <Toast msg={toast}/>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
 // ROOT APP
 // ══════════════════════════════════════════════════════════════
 export default function App() {
-  const [owner, setOwner] = useState(null);
+  const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
 
-  // Check for existing session on load
   useEffect(() => {
-    const saved = localStorage.getItem("rentok_owner");
+    const saved = localStorage.getItem("rentok_user");
     if(saved) {
       try {
         const parsed = JSON.parse(saved);
-        // Re-verify the owner still exists in DB
-        supabase.from("owners").select("*").eq("id", parsed.id).single()
+        const table = parsed.type === "tenant" ? "tenants" : "owners";
+        supabase.from(table).select("*").eq("id", parsed.id).single()
           .then(({ data }) => {
-            if(data) setOwner(data);
+            if(data) setUser({ type: parsed.type, ...data });
             setChecking(false);
           });
       } catch { setChecking(false); }
     } else { setChecking(false); }
   }, []);
 
-  const handleLogin = (ownerData) => {
-    localStorage.setItem("rentok_owner", JSON.stringify(ownerData));
-    setOwner(ownerData);
+  const handleLogin = (userData) => {
+    localStorage.setItem("rentok_user", JSON.stringify(userData));
+    setUser(userData);
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("rentok_owner");
-    setOwner(null);
+    localStorage.removeItem("rentok_user");
+    setUser(null);
   };
 
   if(checking) return (
@@ -1085,6 +1476,7 @@ export default function App() {
     </div>
   );
 
-  if(owner) return <OwnerDashboard owner={owner} onLogout={handleLogout}/>;
+  if(user?.type === "tenant") return <TenantDashboard tenant={user} onLogout={handleLogout}/>;
+  if(user?.type === "owner") return <OwnerDashboard owner={user} onLogout={handleLogout}/>;
   return <LoginScreen onLogin={handleLogin}/>;
 }
