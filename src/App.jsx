@@ -671,20 +671,26 @@ function OwnerDashboard({ owner, onLogout }) {
   const [selUnit, setSelUnit] = useState(null);
   const [editTenant, setEditTenant] = useState(null);
   const [expandedTile, setExpandedTile] = useState(null);
+  const [expenses, setExpenses] = useState([]);
+  const [showAddExpense, setShowAddExpense] = useState(false);
+  const [newExp, setNewExp] = useState({ title:"", amount:"", category:"repair", unit_id:"", date:"", notes:"" });
+  const [savingExp, setSavingExp] = useState(false);
 
   const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(null), 3000); };
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [{ data: u }, { data: p }, { data: r }] = await Promise.all([
+      const [{ data: u }, { data: p }, { data: r }, { data: e }] = await Promise.all([
         supabase.from("units").select("*, tenants(*)").eq("owner_id", owner.id).order("unit_number"),
         supabase.from("payments").select("*, units(unit_number), tenants(name, phone)").eq("owner_id", owner.id).order("created_at", { ascending:false }).limit(50),
         supabase.from("maintenance_requests").select("*, units(unit_number)").eq("owner_id", owner.id).order("created_at", { ascending:false }),
+        supabase.from("expenses").select("*, units(unit_number)").eq("owner_id", owner.id).order("date", { ascending:false }).limit(100),
       ]);
       setUnits(u || []);
       setPayments(p || []);
       setRequests(r || []);
+      setExpenses(e || []);
     } catch(e) { console.error(e); }
     setLoading(false);
   }, [owner.id]);
@@ -914,11 +920,55 @@ function OwnerDashboard({ owner, onLogout }) {
     return { label:monthLabel, expected, collected: isFuture ? null : collected, isFuture };
   });
 
+  const saveExpense = async () => {
+    if(!newExp.title.trim()) { showToast("Please enter a description"); return; }
+    if(!newExp.amount || isNaN(newExp.amount)) { showToast("Please enter a valid amount"); return; }
+    setSavingExp(true);
+    try {
+      await supabase.from("expenses").insert({
+        owner_id: owner.id,
+        unit_id: newExp.unit_id || null,
+        title: newExp.title.trim(),
+        amount: parseFloat(newExp.amount),
+        category: newExp.category,
+        date: newExp.date || new Date().toISOString().split("T")[0],
+        notes: newExp.notes.trim() || null,
+      });
+      setNewExp({ title:"", amount:"", category:"repair", unit_id:"", date:"", notes:"" });
+      setShowAddExpense(false);
+      showToast("Expense added ✓");
+      loadData();
+    } catch(e) { showToast("Failed to save expense"); console.error(e); }
+    setSavingExp(false);
+  };
+
+  const deleteExpense = async (id) => {
+    await supabase.from("expenses").delete().eq("id", id);
+    showToast("Expense deleted");
+    loadData();
+  };
+
+  const totalExpenses = expenses.reduce((s, e) => s + Number(e.amount), 0);
+  const netIncome = payments.filter(p => p.status === "paid").reduce((s,p) => s + Number(p.amount), 0) - totalExpenses;
+
+  const EXP_CATEGORIES = [
+    { value:"repair",      label:"🔧 Repair",        color: T.rose },
+    { value:"maintenance", label:"🛠 Maintenance",    color: T.amber },
+    { value:"cleaning",    label:"🧹 Cleaning",       color: T.sky },
+    { value:"utility",     label:"💡 Utility",        color: T.plum },
+    { value:"tax",         label:"📋 Tax / Legal",    color: T.ink2 },
+    { value:"insurance",   label:"🛡 Insurance",      color: T.teal },
+    { value:"renovation",  label:"🏗 Renovation",     color: T.saffron },
+    { value:"other",       label:"📦 Other",          color: T.muted },
+  ];
+  const catMeta = (val) => EXP_CATEGORIES.find(c => c.value === val) || EXP_CATEGORIES[EXP_CATEGORIES.length-1];
+
   const tabs = [
     { id:"dashboard", icon:"📊", label:"Dashboard" },
-    { id:"units", icon:"🏡", label:"Units" },
-    { id:"payments", icon:"💰", label:"Payments" },
-    { id:"requests", icon:"🔧", label:"Requests" },
+    { id:"units",     icon:"🏡", label:"Units" },
+    { id:"payments",  icon:"💰", label:"Payments" },
+    { id:"expenses",  icon:"🧾", label:"Expenses" },
+    { id:"requests",  icon:"🔧", label:"Requests" },
   ];
 
   if(loading) return (
@@ -1834,6 +1884,212 @@ function OwnerDashboard({ owner, onLogout }) {
                 )}
               </div>
             ))}
+          </div>
+        )}
+
+        {/* EXPENSES TAB */}
+        {tab === "expenses" && (
+          <div style={{ padding:"18px 16px" }} className="fu">
+
+            {/* Header row */}
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+              <div style={{ fontWeight:800, fontSize:15, color:T.ink }}>Expenses</div>
+              <button onClick={()=>setShowAddExpense(v=>!v)}
+                style={{ background:T.saffron, border:"none", borderRadius:10,
+                  padding:"7px 14px", fontSize:12, fontWeight:800, color:"#fff", cursor:"pointer" }}>
+                {showAddExpense ? "✕ Cancel" : "+ Add Expense"}
+              </button>
+            </div>
+
+            {/* Summary cards */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:18 }}>
+              {[
+                { label:"Total Spent", value:fd(totalExpenses), color:T.rose, icon:"💸" },
+                { label:"Income", value:fd(payments.filter(p=>p.status==="paid").reduce((s,p)=>s+Number(p.amount),0)), color:T.teal, icon:"💰" },
+                { label:"Net", value:fd(netIncome), color:netIncome>=0?T.teal:T.rose, icon:"📈" },
+              ].map(s => (
+                <div key={s.label} style={{ background:T.card, border:`1.5px solid ${s.color}25`,
+                  borderRadius:13, padding:"11px 10px", textAlign:"center" }}>
+                  <div style={{ fontSize:18, marginBottom:4 }}>{s.icon}</div>
+                  <div style={{ fontSize:12, fontWeight:900, color:s.color }}>{s.value}</div>
+                  <div style={{ fontSize:9, color:T.muted, fontWeight:700 }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Add expense form */}
+            {showAddExpense && (
+              <div style={{ background:T.surface, border:`1.5px solid ${T.saffron}40`,
+                borderRadius:16, padding:18, marginBottom:18 }} className="fu">
+                <div style={{ fontSize:13, fontWeight:800, color:T.ink, marginBottom:14 }}>New Expense</div>
+
+                {/* Category picker */}
+                <div style={{ marginBottom:14 }}>
+                  <div style={{ fontSize:10, fontWeight:700, color:T.muted, letterSpacing:.5,
+                    textTransform:"uppercase", marginBottom:7 }}>Category</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:7 }}>
+                    {EXP_CATEGORIES.map(c => (
+                      <button key={c.value} onClick={()=>setNewExp(p=>({...p,category:c.value}))}
+                        style={{ padding:"8px 10px", borderRadius:10, textAlign:"left",
+                          border:`1.5px solid ${newExp.category===c.value?c.color:T.border2}`,
+                          background:newExp.category===c.value?`${c.color}12`:T.panel,
+                          color:newExp.category===c.value?c.color:T.muted,
+                          fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Description */}
+                <div style={{ marginBottom:11 }}>
+                  <div style={{ fontSize:10, fontWeight:700, color:T.muted, letterSpacing:.5,
+                    textTransform:"uppercase", marginBottom:5 }}>Description *</div>
+                  <input value={newExp.title}
+                    onChange={e=>setNewExp(p=>({...p,title:e.target.value}))}
+                    placeholder="e.g. Fixed leaking pipe in Flat 2B"
+                    style={{ width:"100%", background:T.panel, border:`1.5px solid ${T.border2}`,
+                      color:T.ink, borderRadius:10, padding:"10px 13px", fontSize:13,
+                      fontWeight:600, boxSizing:"border-box" }}/>
+                </div>
+
+                {/* Amount + Date row */}
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:11 }}>
+                  <div>
+                    <div style={{ fontSize:10, fontWeight:700, color:T.muted, letterSpacing:.5,
+                      textTransform:"uppercase", marginBottom:5 }}>Amount (₹) *</div>
+                    <input type="number" value={newExp.amount}
+                      onChange={e=>setNewExp(p=>({...p,amount:e.target.value}))}
+                      placeholder="e.g. 2500"
+                      style={{ width:"100%", background:T.panel, border:`1.5px solid ${T.border2}`,
+                        color:T.ink, borderRadius:10, padding:"10px 13px", fontSize:13,
+                        fontWeight:600, boxSizing:"border-box" }}/>
+                  </div>
+                  <div>
+                    <div style={{ fontSize:10, fontWeight:700, color:T.muted, letterSpacing:.5,
+                      textTransform:"uppercase", marginBottom:5 }}>Date</div>
+                    <input type="date" value={newExp.date}
+                      onChange={e=>setNewExp(p=>({...p,date:e.target.value}))}
+                      style={{ width:"100%", background:T.panel, border:`1.5px solid ${T.border2}`,
+                        color:T.ink, borderRadius:10, padding:"10px 13px", fontSize:13,
+                        fontWeight:600, boxSizing:"border-box" }}/>
+                  </div>
+                </div>
+
+                {/* Unit (optional) */}
+                <div style={{ marginBottom:11 }}>
+                  <div style={{ fontSize:10, fontWeight:700, color:T.muted, letterSpacing:.5,
+                    textTransform:"uppercase", marginBottom:5 }}>Unit (optional)</div>
+                  <select value={newExp.unit_id}
+                    onChange={e=>setNewExp(p=>({...p,unit_id:e.target.value}))}
+                    style={{ width:"100%", background:T.panel, border:`1.5px solid ${T.border2}`,
+                      color:T.ink, borderRadius:10, padding:"10px 13px", fontSize:13,
+                      fontWeight:600, boxSizing:"border-box", appearance:"none" }}>
+                    <option value="">— Whole property / general —</option>
+                    {units.map(u => (
+                      <option key={u.id} value={u.id}>{u.unit_number}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Notes */}
+                <div style={{ marginBottom:14 }}>
+                  <div style={{ fontSize:10, fontWeight:700, color:T.muted, letterSpacing:.5,
+                    textTransform:"uppercase", marginBottom:5 }}>Notes (optional)</div>
+                  <textarea value={newExp.notes}
+                    onChange={e=>setNewExp(p=>({...p,notes:e.target.value}))}
+                    placeholder="Vendor name, receipt number, etc."
+                    rows={2}
+                    style={{ width:"100%", background:T.panel, border:`1.5px solid ${T.border2}`,
+                      color:T.ink, borderRadius:10, padding:"10px 13px", fontSize:13,
+                      fontWeight:600, boxSizing:"border-box", resize:"none", fontFamily:"inherit" }}/>
+                </div>
+
+                <button onClick={saveExpense} disabled={savingExp}
+                  style={{ width:"100%", padding:"11px", background:T.saffron, border:"none",
+                    borderRadius:11, fontSize:13, fontWeight:800, color:"#fff", cursor:"pointer",
+                    display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+                  {savingExp ? <Spinner/> : "Save Expense →"}
+                </button>
+              </div>
+            )}
+
+            {/* Category breakdown bar chart */}
+            {expenses.length > 0 && (()=>{
+              const byCategory = EXP_CATEGORIES.map(c => ({
+                ...c,
+                total: expenses.filter(e=>e.category===c.value).reduce((s,e)=>s+Number(e.amount),0),
+              })).filter(c => c.total > 0).sort((a,b)=>b.total-a.total);
+              const maxCat = byCategory[0]?.total || 1;
+              return (
+                <div style={{ background:T.card, border:`1.5px solid ${T.border}`,
+                  borderRadius:16, padding:16, marginBottom:18 }}>
+                  <div style={{ fontSize:13, fontWeight:800, color:T.ink, marginBottom:14 }}>
+                    📊 Breakdown by Category
+                  </div>
+                  {byCategory.map(c => (
+                    <div key={c.value} style={{ marginBottom:10 }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                        <span style={{ fontSize:12, fontWeight:700, color:T.ink }}>{c.label}</span>
+                        <span style={{ fontSize:12, fontWeight:900, color:c.color }}>{fd(c.total)}</span>
+                      </div>
+                      <div style={{ height:6, background:T.panel, borderRadius:3, overflow:"hidden" }}>
+                        <div style={{ height:"100%", borderRadius:3,
+                          width:`${(c.total/maxCat)*100}%`,
+                          background:c.color, transition:"width .4s" }}/>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* Expense list */}
+            {expenses.length === 0 && !showAddExpense && (
+              <div style={{ textAlign:"center", padding:"40px 20px", color:T.muted }}>
+                <div style={{ fontSize:32, marginBottom:10 }}>🧾</div>
+                <div style={{ fontSize:14, fontWeight:700 }}>No expenses yet</div>
+                <div style={{ fontSize:12, marginTop:4 }}>Track repairs, maintenance and other costs</div>
+              </div>
+            )}
+            {expenses.map(exp => {
+              const cat = catMeta(exp.category);
+              return (
+                <div key={exp.id} style={{ background:T.card, border:`1.5px solid ${T.border}`,
+                  borderRadius:13, padding:"12px 14px", marginBottom:10 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"start" }}>
+                    <div style={{ display:"flex", gap:10, flex:1 }}>
+                      <div style={{ width:36, height:36, borderRadius:10,
+                        background:`${cat.color}15`, display:"flex",
+                        alignItems:"center", justifyContent:"center",
+                        fontSize:16, flexShrink:0 }}>
+                        {cat.label.split(" ")[0]}
+                      </div>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:13, fontWeight:700, color:T.ink }}>{exp.title}</div>
+                        <div style={{ fontSize:10, color:T.muted, marginTop:2 }}>
+                          {fmt(exp.date)}
+                          {exp.units?.unit_number && ` · ${exp.units.unit_number}`}
+                        </div>
+                        {exp.notes && (
+                          <div style={{ fontSize:11, color:T.ink2, marginTop:4, lineHeight:1.5 }}>{exp.notes}</div>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ textAlign:"right", marginLeft:10 }}>
+                      <div style={{ fontSize:14, fontWeight:900, color:T.rose }}>−{fd(exp.amount)}</div>
+                      <Chip label={cat.value} color={cat.color}/>
+                      <button onClick={()=>deleteExpense(exp.id)}
+                        style={{ display:"block", marginTop:6, marginLeft:"auto",
+                          background:"none", border:"none", fontSize:13,
+                          color:T.muted, cursor:"pointer", padding:0 }}>
+                        🗑
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 
