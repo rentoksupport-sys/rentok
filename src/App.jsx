@@ -275,76 +275,63 @@ function LoginScreen({ onLogin }) {
     if(phone.length !== 10) { setError("Enter a valid 10-digit WhatsApp number"); return; }
     setLoading(true); setError("");
     try {
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
-      const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-
-      // Try to save OTP session — don't block if it fails
-      try {
-        const { data } = await supabase
-          .from("otp_sessions")
-          .insert({ phone:`+91${phone}`, otp_code:code, expires_at:expires })
-          .select("id").single();
-        if(data) setSessionId(data.id);
-      } catch(dbErr) {
-        console.warn("DB save failed, continuing:", dbErr);
-      }
-
-      // Send WhatsApp OTP via Edge Function — no auth header needed (JWT off)
+      // OTP code is generated SERVER-SIDE in the Edge Function (never exposed to frontend)
       const res = await fetch(`${SUPABASE_URL}/functions/v1/send-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone:`+91${phone}`, code }),
+        body: JSON.stringify({ phone: `+91${phone}` }),
       });
-
-      console.log("OTP send status:", res.status);
+      const json = await res.json();
+      if(res.status === 429) { setError("Too many attempts. Please wait 10 minutes."); setLoading(false); return; }
+      if(!res.ok) { setError("Could not send OTP. Please try again."); setLoading(false); return; }
       setStep("otp");
       setResendTimer(30);
     } catch(e) {
-      console.warn("OTP send failed:", e);
-      setStep("otp");
-      setResendTimer(30);
+      setError("Could not send OTP. Check your connection.");
     }
     setLoading(false);
   };
 
   const verifyOtp = async () => {
     if(otp.length !== 6) { setError("Enter the 6-digit OTP"); return; }
+    if(!/^\d{6}$/.test(otp)) { setError("OTP must be 6 digits"); return; }
     setLoading(true); setError("");
     try {
-      // Check OTP — allow 123456 as dev bypass
-      const isDev = otp === "123456";
-      if(!isDev) {
-        if(!sessionId) { setError("Session expired. Please request a new OTP."); setLoading(false); return; }
-        const { data: session } = await supabase
-          .from("otp_sessions")
-          .select("*")
-          .eq("id", sessionId)
-          .eq("phone", `+91${phone}`)
-          .eq("used", false)
-          .maybeSingle();
+      // Verify via Edge Function — OTP record is read server-side only
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/verify-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: `+91${phone}`, code: otp }),
+      });
+      const json = await res.json();
 
-        if(!session) { setError("Invalid or expired OTP. Please try again."); setLoading(false); return; }
-        if(new Date(session.expires_at) < new Date()) { setError("OTP expired. Please request a new one."); setLoading(false); return; }
-        if(session.otp_code !== otp) { setError("Incorrect OTP. Please try again."); setLoading(false); return; }
-        await supabase.from("otp_sessions").update({ used:true }).eq("id", sessionId);
-      }
+      if(res.status === 429) { setError("Too many failed attempts. Please request a new OTP."); setLoading(false); return; }
+      if(!res.ok || !json.valid) { setError(json.error || "Incorrect OTP. Please try again."); setLoading(false); return; }
+
+      // Check if admin
+      const { data: adminRow } = await supabase
+        .from("admin_phones")
+        .select("*")
+        .eq("phone", `+91${phone}`)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if(adminRow) { onLogin({ type:"admin", phone:`+91${phone}`, name:adminRow.name, role:adminRow.role }); return; }
 
       // Check if owner exists
       const { data: existingOwner } = await supabase
         .from("owners").select("*").eq("phone", `+91${phone}`).maybeSingle();
-
       if(existingOwner) { onLogin({ type:"owner", ...existingOwner }); return; }
 
       // Check if tenant exists
       const { data: existingTenant } = await supabase
         .from("tenants").select("*, units(*, properties(*))").eq("phone", `+91${phone}`).eq("is_active", true).maybeSingle();
-
       if(existingTenant) { onLogin({ type:"tenant", ...existingTenant }); return; }
 
-      // New user — ask for role first
+      // New user — ask for role
       setStep("role");
     } catch(e) {
-      setStep("profile"); // Fallback for dev
+      setError("Verification failed. Please try again.");
     }
     setLoading(false);
   };
@@ -922,34 +909,49 @@ function OwnerDashboard({ owner, onLogout }) {
 
   const saveExpense = async () => {
     if(!newExp.title.trim()) { showToast("Please enter a description"); return; }
-    if(!newExp.amount || isNaN(newExp.amount)) { showToast("Please enter a valid amount"); return; }
+    if(!newExp.amount || isNaN(newExp.amount) || parseFloat(newExp.amount) <= 0) {
+      showToast("Please enter a valid amount greater than 0"); return;
+    }
     setSavingExp(true);
     try {
-      await supabase.from("expenses").insert({
+      const { error: insertErr } = await supabase.from("expenses").insert({
         owner_id: owner.id,
-        unit_id: newExp.unit_id || null,
-        title: newExp.title.trim(),
-        amount: parseFloat(newExp.amount),
+        unit_id:  newExp.unit_id || null,
+        title:    newExp.title.trim(),
+        amount:   parseFloat(newExp.amount),
         category: newExp.category,
-        date: newExp.date || new Date().toISOString().split("T")[0],
-        notes: newExp.notes.trim() || null,
+        date:     newExp.date || new Date().toISOString().split("T")[0],
+        notes:    newExp.notes.trim() || null,
       });
+      if(insertErr) throw insertErr;
       setNewExp({ title:"", amount:"", category:"repair", unit_id:"", date:"", notes:"" });
       setShowAddExpense(false);
-      showToast("Expense added ✓");
+      showToast("Expense saved ✓");
       loadData();
-    } catch(e) { showToast("Failed to save expense"); console.error(e); }
+    } catch(e) {
+      const msg = e?.message || "";
+      if(msg.includes("relation") || msg.includes("does not exist")) {
+        showToast("⚠️ Run the expenses SQL migration in Supabase first");
+      } else if(msg.includes("violates")) {
+        showToast("⚠️ Check column values — " + msg.slice(0,60));
+      } else {
+        showToast("Failed to save: " + (msg.slice(0,60) || "unknown error"));
+      }
+      console.error("saveExpense error:", e);
+    }
     setSavingExp(false);
   };
 
   const deleteExpense = async (id) => {
-    await supabase.from("expenses").delete().eq("id", id);
+    const { error } = await supabase.from("expenses").delete().eq("id", id);
+    if(error) { showToast("Could not delete expense"); return; }
     showToast("Expense deleted");
     loadData();
   };
 
-  const totalExpenses = expenses.reduce((s, e) => s + Number(e.amount), 0);
-  const netIncome = payments.filter(p => p.status === "paid").reduce((s,p) => s + Number(p.amount), 0) - totalExpenses;
+  const totalExpenses  = expenses.reduce((s, e) => s + (isNaN(Number(e.amount)) ? 0 : Number(e.amount)), 0);
+  const totalCollected = payments.filter(p => p.status === "paid").reduce((s,p) => s + (isNaN(Number(p.amount)) ? 0 : Number(p.amount)), 0);
+  const netIncome      = totalCollected - totalExpenses;
 
   const EXP_CATEGORIES = [
     { value:"repair",      label:"🔧 Repair",        color: T.rose },
@@ -1905,7 +1907,7 @@ function OwnerDashboard({ owner, onLogout }) {
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:18 }}>
               {[
                 { label:"Total Spent", value:fd(totalExpenses), color:T.rose, icon:"💸" },
-                { label:"Income", value:fd(payments.filter(p=>p.status==="paid").reduce((s,p)=>s+Number(p.amount),0)), color:T.teal, icon:"💰" },
+                { label:"Income", value:fd(totalCollected), color:T.teal, icon:"💰" },
                 { label:"Net", value:fd(netIncome), color:netIncome>=0?T.teal:T.rose, icon:"📈" },
               ].map(s => (
                 <div key={s.label} style={{ background:T.card, border:`1.5px solid ${s.color}25`,
@@ -2577,30 +2579,551 @@ function TenantDashboard({ tenant, onLogout }) {
 }
 
 // ══════════════════════════════════════════════════════════════
+// ADMIN DASHBOARD
+// ══════════════════════════════════════════════════════════════
+function AdminDashboard({ admin, onLogout }) {
+  const [tab, setTab]           = useState("overview");
+  const [owners, setOwners]     = useState([]);
+  const [tenants, setTenants]   = useState([]);
+  const [payments, setPayments] = useState([]);
+  const [requests, setRequests] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [notes, setNotes]       = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [toast, setToast]       = useState(null);
+  const [search, setSearch]     = useState("");
+  const [selOwner, setSelOwner] = useState(null);
+  const [selTenant, setSelTenant] = useState(null);
+  const [newNote, setNewNote]   = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+
+  const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(null),3000); };
+
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [{ data: o }, { data: t }, { data: p }, { data: r }, { data: e }, { data: n }] = await Promise.all([
+        supabase.from("owners").select("*").order("created_at", { ascending:false }),
+        supabase.from("tenants").select("*, units(unit_number, rent_amount)").order("created_at", { ascending:false }),
+        supabase.from("payments").select("*, units(unit_number), tenants(name), owners(name)").order("created_at", { ascending:false }).limit(200),
+        supabase.from("maintenance_requests").select("*, units(unit_number), tenants(name)").order("created_at", { ascending:false }).limit(200),
+        supabase.from("expenses").select("*, units(unit_number), owners(name)").order("date", { ascending:false }).limit(200),
+        supabase.from("support_notes").select("*").order("created_at", { ascending:false }),
+      ]);
+      setOwners(o||[]); setTenants(t||[]); setPayments(p||[]);
+      setRequests(r||[]); setExpenses(e||[]); setNotes(n||[]);
+    } catch(err) { console.error(err); }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  const addNote = async (entityType, entityId) => {
+    if(!newNote.trim()) return;
+    setSavingNote(true);
+    try {
+      await supabase.from("support_notes").insert({
+        admin_phone: admin.phone,
+        admin_name:  admin.name,
+        entity_type: entityType,
+        entity_id:   entityId,
+        note:        newNote.trim(),
+      });
+      setNewNote("");
+      showToast("Note added ✓");
+      const { data: n } = await supabase.from("support_notes").select("*").order("created_at", { ascending:false });
+      setNotes(n||[]);
+    } catch(e) { showToast("Failed to save note"); }
+    setSavingNote(false);
+  };
+
+  const totalRentRoll    = owners.reduce((s,o) => s, 0); // computed below
+  const totalPayments    = payments.filter(p=>p.status==="paid").reduce((s,p)=>s+Number(p.amount),0);
+  const pendingCount     = payments.filter(p=>p.status==="pending").length;
+  const verifyCount      = payments.filter(p=>p.status==="verification_pending").length;
+  const openRequests     = requests.filter(r=>r.status==="open").length;
+  const activeOwners     = owners.length;
+  const activeTenants    = tenants.filter(t=>t.is_active).length;
+  const totalExpenses    = expenses.reduce((s,e)=>s+Number(e.amount),0);
+
+  const filterStr = search.toLowerCase();
+  const filteredOwners  = owners.filter(o =>
+    o.name?.toLowerCase().includes(filterStr) || o.phone?.includes(filterStr) || o.city?.toLowerCase().includes(filterStr));
+  const filteredTenants = tenants.filter(t =>
+    t.name?.toLowerCase().includes(filterStr) || t.phone?.includes(filterStr));
+
+  const notesFor = (type, id) => notes.filter(n => n.entity_type === type && n.entity_id === id);
+
+  const ATABS = [
+    { id:"overview",  icon:"📊", label:"Overview"  },
+    { id:"owners",    icon:"🏢", label:"Owners"    },
+    { id:"tenants",   icon:"👥", label:"Tenants"   },
+    { id:"payments",  icon:"💰", label:"Payments"  },
+    { id:"requests",  icon:"🔧", label:"Requests"  },
+    { id:"expenses",  icon:"🧾", label:"Expenses"  },
+  ];
+
+  // ── Detail panel for owner ──────────────────────────────────
+  const OwnerPanel = ({ owner }) => {
+    const ownerNotes   = notesFor("owner", owner.id);
+    const ownerPayments = payments.filter(p => p.owners?.name === owner.name || p.owner_id === owner.id);
+    return (
+      <div style={{ position:"fixed", inset:0, zIndex:8000, background:"rgba(0,0,0,.5)",
+        display:"flex", alignItems:"flex-end", justifyContent:"center" }}
+        onClick={e=>{ if(e.target===e.currentTarget) setSelOwner(null); }}>
+        <div className="fu" style={{ background:T.surface, borderRadius:"22px 22px 0 0",
+          width:"100%", maxWidth:520, maxHeight:"85vh", overflowY:"auto",
+          padding:"20px 18px 36px", boxShadow:"0 -8px 40px rgba(0,0,0,.2)" }}>
+          <div style={{ width:40, height:4, borderRadius:2, background:T.border2, margin:"0 auto 18px" }}/>
+
+          {/* Owner header */}
+          <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:18 }}>
+            <div style={{ width:48, height:48, borderRadius:14,
+              background:`linear-gradient(135deg,${T.saffron},${T.saffronB})`,
+              display:"flex", alignItems:"center", justifyContent:"center",
+              fontSize:20, fontWeight:900, color:"#fff", flexShrink:0 }}>
+              {(owner.name||"?")[0].toUpperCase()}
+            </div>
+            <div>
+              <div style={{ fontSize:16, fontWeight:900, color:T.ink }}>{owner.name}</div>
+              <div style={{ fontSize:12, color:T.muted }}>{owner.phone} · {owner.city||"—"}</div>
+              <div style={{ fontSize:10, color:T.muted }}>Joined {fmt(owner.created_at)}</div>
+            </div>
+          </div>
+
+          {/* Quick stats */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:18 }}>
+            {[
+              { label:"Paid",    v: fd(ownerPayments.filter(p=>p.status==="paid").reduce((s,p)=>s+Number(p.amount),0)), color:T.teal },
+              { label:"Pending", v: ownerPayments.filter(p=>p.status==="pending").length + " bills", color:T.rose },
+              { label:"Verify",  v: ownerPayments.filter(p=>p.status==="verification_pending").length, color:T.amber },
+            ].map(s=>(
+              <div key={s.label} style={{ background:T.panel, borderRadius:11, padding:"10px 8px", textAlign:"center" }}>
+                <div style={{ fontSize:13, fontWeight:900, color:s.color }}>{s.v}</div>
+                <div style={{ fontSize:9, color:T.muted, fontWeight:700 }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Support notes */}
+          <div style={{ fontSize:12, fontWeight:800, color:T.ink, marginBottom:10 }}>🗒 Support Notes</div>
+          {ownerNotes.length === 0 && (
+            <div style={{ fontSize:12, color:T.muted, marginBottom:12 }}>No notes yet</div>
+          )}
+          {ownerNotes.map(n=>(
+            <div key={n.id} style={{ background:T.panel, borderRadius:10, padding:"9px 12px", marginBottom:8,
+              border:`1px solid ${T.border}` }}>
+              <div style={{ fontSize:12, color:T.ink, lineHeight:1.5 }}>{n.note}</div>
+              <div style={{ fontSize:10, color:T.muted, marginTop:4 }}>{n.admin_name} · {fmt(n.created_at)}</div>
+            </div>
+          ))}
+          <div style={{ display:"flex", gap:8, marginTop:8 }}>
+            <input value={newNote} onChange={e=>setNewNote(e.target.value)}
+              placeholder="Add a support note…"
+              style={{ flex:1, background:T.panel, border:`1.5px solid ${T.border2}`,
+                color:T.ink, borderRadius:10, padding:"9px 12px", fontSize:12, fontWeight:600 }}/>
+            <button onClick={()=>addNote("owner", owner.id)} disabled={savingNote||!newNote.trim()}
+              style={{ background:T.saffron, border:"none", borderRadius:10,
+                padding:"9px 14px", fontSize:12, fontWeight:800, color:"#fff", cursor:"pointer" }}>
+              {savingNote ? "…" : "Save"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ── Detail panel for tenant ─────────────────────────────────
+  const TenantPanel = ({ tenant }) => {
+    const tNotes = notesFor("tenant", tenant.id);
+    return (
+      <div style={{ position:"fixed", inset:0, zIndex:8000, background:"rgba(0,0,0,.5)",
+        display:"flex", alignItems:"flex-end", justifyContent:"center" }}
+        onClick={e=>{ if(e.target===e.currentTarget) setSelTenant(null); }}>
+        <div className="fu" style={{ background:T.surface, borderRadius:"22px 22px 0 0",
+          width:"100%", maxWidth:520, maxHeight:"85vh", overflowY:"auto",
+          padding:"20px 18px 36px", boxShadow:"0 -8px 40px rgba(0,0,0,.2)" }}>
+          <div style={{ width:40, height:4, borderRadius:2, background:T.border2, margin:"0 auto 18px" }}/>
+          <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:18 }}>
+            <div style={{ width:48, height:48, borderRadius:14, background:`linear-gradient(135deg,${T.teal},${T.tealB})`,
+              display:"flex", alignItems:"center", justifyContent:"center",
+              fontSize:20, fontWeight:900, color:"#fff", flexShrink:0 }}>
+              {(tenant.name||"?")[0].toUpperCase()}
+            </div>
+            <div>
+              <div style={{ fontSize:16, fontWeight:900, color:T.ink }}>{tenant.name}</div>
+              <div style={{ fontSize:12, color:T.muted }}>{tenant.phone||"—"} · {tenant.units?.unit_number||"No unit"}</div>
+              <div style={{ fontSize:10, color:T.muted }}>
+                {tenant.is_active ? "🟢 Active" : "🔴 Inactive"} · Joined {fmt(tenant.created_at)}
+              </div>
+            </div>
+          </div>
+          <div style={{ fontSize:12, fontWeight:800, color:T.ink, marginBottom:10 }}>🗒 Support Notes</div>
+          {tNotes.length === 0 && <div style={{ fontSize:12, color:T.muted, marginBottom:12 }}>No notes yet</div>}
+          {tNotes.map(n=>(
+            <div key={n.id} style={{ background:T.panel, borderRadius:10, padding:"9px 12px", marginBottom:8, border:`1px solid ${T.border}` }}>
+              <div style={{ fontSize:12, color:T.ink, lineHeight:1.5 }}>{n.note}</div>
+              <div style={{ fontSize:10, color:T.muted, marginTop:4 }}>{n.admin_name} · {fmt(n.created_at)}</div>
+            </div>
+          ))}
+          <div style={{ display:"flex", gap:8, marginTop:8 }}>
+            <input value={newNote} onChange={e=>setNewNote(e.target.value)}
+              placeholder="Add a support note…"
+              style={{ flex:1, background:T.panel, border:`1.5px solid ${T.border2}`,
+                color:T.ink, borderRadius:10, padding:"9px 12px", fontSize:12, fontWeight:600 }}/>
+            <button onClick={()=>addNote("tenant", tenant.id)} disabled={savingNote||!newNote.trim()}
+              style={{ background:T.teal, border:"none", borderRadius:10,
+                padding:"9px 14px", fontSize:12, fontWeight:800, color:"#fff", cursor:"pointer" }}>
+              {savingNote ? "…" : "Save"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  if(loading) return (
+    <div style={{ fontFamily:"'Nunito','Segoe UI',sans-serif", background:T.bg,
+      minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
+      flexDirection:"column", gap:14 }}>
+      <style>{CSS}</style>
+      <Spinner/>
+      <div style={{ fontSize:13, color:T.muted }}>Loading admin data…</div>
+    </div>
+  );
+
+  return (
+    <div style={{ fontFamily:"'Nunito','Segoe UI',sans-serif", background:T.bg,
+      color:T.ink, minHeight:"100vh", display:"flex", flexDirection:"column", maxWidth:520, margin:"0 auto" }}>
+      <style>{CSS}</style>
+
+      {/* Top bar */}
+      <div style={{ background:`linear-gradient(135deg,${T.plum},#6D28D9)`,
+        padding:"11px 16px", display:"flex", alignItems:"center",
+        justifyContent:"space-between", position:"sticky", top:0, zIndex:50 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <div style={{ width:30, height:30, borderRadius:9, background:"rgba(255,255,255,.2)",
+            display:"flex", alignItems:"center", justifyContent:"center", fontSize:15 }}>🛡</div>
+          <div>
+            <div style={{ fontWeight:900, fontSize:14, color:"#fff", letterSpacing:-.3 }}>Rentok Admin</div>
+            <div style={{ fontSize:9, color:"rgba(255,255,255,.7)" }}>{admin.name} · {admin.role}</div>
+          </div>
+        </div>
+        <button onClick={onLogout}
+          style={{ background:"rgba(255,255,255,.15)", border:"1px solid rgba(255,255,255,.3)",
+            borderRadius:8, padding:"5px 12px", fontSize:11, fontWeight:700, color:"#fff", cursor:"pointer" }}>
+          Logout
+        </button>
+      </div>
+
+      {/* Search bar */}
+      <div style={{ padding:"12px 16px 0", background:T.surface,
+        borderBottom:`1px solid ${T.border}` }}>
+        <input value={search} onChange={e=>setSearch(e.target.value)}
+          placeholder="🔍 Search owners, tenants, phone…"
+          style={{ width:"100%", background:T.panel, border:`1.5px solid ${T.border2}`,
+            color:T.ink, borderRadius:11, padding:"9px 14px", fontSize:13,
+            fontWeight:600, boxSizing:"border-box" }}/>
+        <div style={{ display:"flex", gap:0, marginTop:10, overflowX:"auto",
+          WebkitOverflowScrolling:"touch" }}>
+          {ATABS.map(t => (
+            <button key={t.id} onClick={()=>setTab(t.id)}
+              style={{ flex:"0 0 auto", padding:"7px 14px", background:"none", border:"none",
+                borderBottom:`2.5px solid ${tab===t.id?T.plum:"transparent"}`,
+                color:tab===t.id?T.plum:T.muted, fontFamily:"inherit",
+                fontSize:12, fontWeight:800, cursor:"pointer", whiteSpace:"nowrap" }}>
+              {t.icon} {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ flex:1, overflowY:"auto", paddingBottom:32 }}>
+
+        {/* OVERVIEW */}
+        {tab === "overview" && (
+          <div style={{ padding:"18px 16px" }} className="fu">
+            <div style={{ fontWeight:800, fontSize:15, color:T.ink, marginBottom:14 }}>Platform Overview</div>
+
+            {/* KPI grid */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
+              {[
+                { label:"Property Owners",    v: activeOwners,       icon:"🏢", color:T.saffron },
+                { label:"Active Tenants",     v: activeTenants,      icon:"👥", color:T.teal },
+                { label:"Total Collected",    v: fd(totalPayments),  icon:"💰", color:T.teal },
+                { label:"Pending Bills",      v: pendingCount,       icon:"⏳", color:T.rose },
+                { label:"Verify Queue",       v: verifyCount,        icon:"⚡", color:T.amber },
+                { label:"Open Requests",      v: openRequests,       icon:"🔧", color:T.sky },
+                { label:"Total Expenses",     v: fd(totalExpenses),  icon:"💸", color:T.rose },
+                { label:"Support Notes",      v: notes.length,       icon:"🗒",  color:T.plum },
+              ].map(s => (
+                <div key={s.label} style={{ background:T.card, border:`1.5px solid ${s.color}20`,
+                  borderRadius:14, padding:"13px 14px" }}>
+                  <div style={{ fontSize:20, marginBottom:6 }}>{s.icon}</div>
+                  <div style={{ fontSize:18, fontWeight:900, color:s.color }}>{s.v}</div>
+                  <div style={{ fontSize:11, color:T.muted, fontWeight:700 }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Recent support notes */}
+            {notes.length > 0 && (
+              <>
+                <div style={{ fontWeight:800, fontSize:13, color:T.ink, marginBottom:10 }}>Recent Notes</div>
+                {notes.slice(0,5).map(n=>(
+                  <div key={n.id} style={{ background:T.card, border:`1.5px solid ${T.plum}20`,
+                    borderRadius:12, padding:"10px 13px", marginBottom:8 }}>
+                    <div style={{ fontSize:11, fontWeight:800, color:T.plum, marginBottom:4 }}>
+                      {n.entity_type === "owner" ? "🏢 Owner" : "👤 Tenant"} · {n.admin_name}
+                    </div>
+                    <div style={{ fontSize:12, color:T.ink, lineHeight:1.5 }}>{n.note}</div>
+                    <div style={{ fontSize:10, color:T.muted, marginTop:4 }}>{fmt(n.created_at)}</div>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* OWNERS */}
+        {tab === "owners" && (
+          <div style={{ padding:"18px 16px" }} className="fu">
+            <div style={{ fontWeight:800, fontSize:15, color:T.ink, marginBottom:14 }}>
+              Owners ({filteredOwners.length})
+            </div>
+            {filteredOwners.map(o => (
+              <div key={o.id} onClick={()=>{ setSelOwner(o); setNewNote(""); }}
+                style={{ background:T.card, border:`1.5px solid ${T.border}`,
+                  borderRadius:13, padding:"12px 14px", marginBottom:10, cursor:"pointer" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"start" }}>
+                  <div style={{ display:"flex", gap:10, flex:1 }}>
+                    <div style={{ width:38, height:38, borderRadius:11,
+                      background:`linear-gradient(135deg,${T.saffron},${T.saffronB})`,
+                      display:"flex", alignItems:"center", justifyContent:"center",
+                      fontSize:15, fontWeight:900, color:"#fff", flexShrink:0 }}>
+                      {(o.name||"?")[0].toUpperCase()}
+                    </div>
+                    <div>
+                      <div style={{ fontSize:13, fontWeight:800, color:T.ink }}>{o.name}</div>
+                      <div style={{ fontSize:11, color:T.muted }}>{o.phone} · {o.city||"—"}</div>
+                      <div style={{ fontSize:10, color:T.muted }}>Joined {fmt(o.created_at)}</div>
+                    </div>
+                  </div>
+                  <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
+                    {notesFor("owner",o.id).length > 0 && (
+                      <Chip label={`${notesFor("owner",o.id).length} notes`} color={T.plum}/>
+                    )}
+                    <span style={{ fontSize:18, color:T.muted }}>›</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* TENANTS */}
+        {tab === "tenants" && (
+          <div style={{ padding:"18px 16px" }} className="fu">
+            <div style={{ fontWeight:800, fontSize:15, color:T.ink, marginBottom:14 }}>
+              Tenants ({filteredTenants.length})
+            </div>
+            {filteredTenants.map(t => (
+              <div key={t.id} onClick={()=>{ setSelTenant(t); setNewNote(""); }}
+                style={{ background:T.card, border:`1.5px solid ${T.border}`,
+                  borderRadius:13, padding:"12px 14px", marginBottom:10, cursor:"pointer" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <div style={{ display:"flex", gap:10, flex:1 }}>
+                    <div style={{ width:38, height:38, borderRadius:11,
+                      background:`linear-gradient(135deg,${T.teal},${T.tealB})`,
+                      display:"flex", alignItems:"center", justifyContent:"center",
+                      fontSize:15, fontWeight:900, color:"#fff", flexShrink:0 }}>
+                      {(t.name||"?")[0].toUpperCase()}
+                    </div>
+                    <div>
+                      <div style={{ fontSize:13, fontWeight:800, color:T.ink }}>{t.name}</div>
+                      <div style={{ fontSize:11, color:T.muted }}>
+                        {t.phone||"No phone"} · {t.units?.unit_number||"No unit"}
+                      </div>
+                      <div style={{ fontSize:10, color:t.is_active?T.teal:T.rose, fontWeight:700 }}>
+                        {t.is_active ? "Active" : "Inactive"}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
+                    {notesFor("tenant",t.id).length > 0 && (
+                      <Chip label={`${notesFor("tenant",t.id).length} notes`} color={T.plum}/>
+                    )}
+                    <span style={{ fontSize:18, color:T.muted }}>›</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* PAYMENTS */}
+        {tab === "payments" && (
+          <div style={{ padding:"18px 16px" }} className="fu">
+            <div style={{ fontWeight:800, fontSize:15, color:T.ink, marginBottom:14 }}>
+              All Payments ({payments.length})
+            </div>
+            {/* Filter chips */}
+            {["all","pending","verification_pending","paid"].map(s=>(
+              <span key={s} onClick={()=>setSearch(s==="all"?"":s)}
+                style={{ display:"inline-block", marginRight:6, marginBottom:12,
+                  padding:"4px 12px", borderRadius:20, fontSize:11, fontWeight:700,
+                  cursor:"pointer",
+                  background: search===s||(!search&&s==="all")?T.plum:T.panel,
+                  color: search===s||(!search&&s==="all")?"#fff":T.muted,
+                  border:`1px solid ${search===s||(!search&&s==="all")?T.plum:T.border2}` }}>
+                {s==="all"?"All":s==="verification_pending"?"Verify":s}
+              </span>
+            ))}
+            {payments
+              .filter(p => !search || p.status===search ||
+                p.tenants?.name?.toLowerCase().includes(filterStr) ||
+                p.owners?.name?.toLowerCase().includes(filterStr))
+              .slice(0,100)
+              .map(p=>(
+              <div key={p.id} style={{ background:T.card,
+                border:`1.5px solid ${p.status==="verification_pending"?T.amber+"50":p.status==="paid"?T.teal+"25":T.border}`,
+                borderRadius:13, padding:"11px 13px", marginBottom:9 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"start" }}>
+                  <div>
+                    <div style={{ fontSize:12, fontWeight:800, color:T.ink }}>
+                      {p.tenants?.name||"—"} · {p.units?.unit_number||"—"}
+                    </div>
+                    <div style={{ fontSize:11, color:T.muted }}>
+                      {p.type} · Due {fmt(p.due_date)}
+                      {p.paid_date && ` · Paid ${fmt(p.paid_date)}`}
+                    </div>
+                    {p.utr_number && (
+                      <div style={{ fontSize:10, color:T.amber, fontWeight:700 }}>UTR: {p.utr_number}</div>
+                    )}
+                    <div style={{ fontSize:10, color:T.muted }}>Owner: {p.owners?.name||"—"}</div>
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ fontSize:14, fontWeight:900, color:T.ink }}>{fd(p.amount)}</div>
+                    <Chip label={p.status==="verification_pending"?"Verify":p.status}
+                      color={p.status==="paid"?T.teal:p.status==="verification_pending"?T.amber:T.rose}/>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* REQUESTS */}
+        {tab === "requests" && (
+          <div style={{ padding:"18px 16px" }} className="fu">
+            <div style={{ fontWeight:800, fontSize:15, color:T.ink, marginBottom:14 }}>
+              Maintenance Requests ({requests.length})
+            </div>
+            {requests.filter(r =>
+              !filterStr || r.title?.toLowerCase().includes(filterStr) ||
+              r.tenants?.name?.toLowerCase().includes(filterStr)
+            ).map(r=>(
+              <div key={r.id} style={{ background:T.card, border:`1.5px solid ${T.border}`,
+                borderRadius:13, padding:"11px 13px", marginBottom:9 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"start" }}>
+                  <div style={{ flex:1, marginRight:8 }}>
+                    <div style={{ fontSize:12, fontWeight:800, color:T.ink }}>{r.title}</div>
+                    <div style={{ fontSize:11, color:T.muted }}>
+                      {r.tenants?.name||"—"} · {r.units?.unit_number||"—"} · {fmt(r.created_at)}
+                    </div>
+                    {r.description && (
+                      <div style={{ fontSize:11, color:T.ink2, marginTop:4, lineHeight:1.5 }}>{r.description}</div>
+                    )}
+                  </div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:4, alignItems:"flex-end" }}>
+                    <Chip label={r.priority} color={r.priority==="high"?T.rose:r.priority==="medium"?T.amber:T.teal}/>
+                    <Chip label={r.status} color={r.status==="resolved"?T.teal:r.status==="in_progress"?T.amber:T.rose}/>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* EXPENSES */}
+        {tab === "expenses" && (
+          <div style={{ padding:"18px 16px" }} className="fu">
+            <div style={{ fontWeight:800, fontSize:15, color:T.ink, marginBottom:14 }}>
+              All Expenses ({expenses.length}) · {fd(totalExpenses)} total
+            </div>
+            {expenses.filter(e =>
+              !filterStr || e.title?.toLowerCase().includes(filterStr) ||
+              e.owners?.name?.toLowerCase().includes(filterStr)
+            ).map(e=>(
+              <div key={e.id} style={{ background:T.card, border:`1.5px solid ${T.border}`,
+                borderRadius:13, padding:"11px 13px", marginBottom:9 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"start" }}>
+                  <div>
+                    <div style={{ fontSize:12, fontWeight:800, color:T.ink }}>{e.title}</div>
+                    <div style={{ fontSize:11, color:T.muted }}>
+                      {e.category} · {fmt(e.date)}
+                      {e.units?.unit_number && ` · ${e.units.unit_number}`}
+                    </div>
+                    <div style={{ fontSize:10, color:T.muted }}>Owner: {e.owners?.name||"—"}</div>
+                    {e.notes && <div style={{ fontSize:11, color:T.ink2, marginTop:3 }}>{e.notes}</div>}
+                  </div>
+                  <div style={{ fontSize:14, fontWeight:900, color:T.rose }}>−{fd(e.amount)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+      </div>
+
+      {/* Detail panels */}
+      {selOwner  && <OwnerPanel  owner={selOwner}/>}
+      {selTenant && <TenantPanel tenant={selTenant}/>}
+      <Toast msg={toast}/>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
 // ROOT APP
 // ══════════════════════════════════════════════════════════════
 export default function App() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
 
+  const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
   useEffect(() => {
     const saved = localStorage.getItem("rentok_user");
     if(saved) {
       try {
         const parsed = JSON.parse(saved);
+        // Check session expiry
+        if(!parsed.session_exp || Date.now() > parsed.session_exp) {
+          localStorage.removeItem("rentok_user");
+          setChecking(false);
+          return;
+        }
+        // Admin — no DB lookup needed, phone is the identity
+        if(parsed.type === "admin") {
+          setUser(parsed);
+          setChecking(false);
+          return;
+        }
         const table = parsed.type === "tenant" ? "tenants" : "owners";
         supabase.from(table).select("*").eq("id", parsed.id).single()
           .then(({ data }) => {
-            if(data) setUser({ type: parsed.type, ...data });
+            if(data) setUser({ type: parsed.type, session_exp: parsed.session_exp, ...data });
             setChecking(false);
           });
-      } catch { setChecking(false); }
+      } catch { localStorage.removeItem("rentok_user"); setChecking(false); }
     } else { setChecking(false); }
   }, []);
 
   const handleLogin = (userData) => {
-    localStorage.setItem("rentok_user", JSON.stringify(userData));
-    setUser(userData);
+    const session = { ...userData, session_exp: Date.now() + SESSION_TTL_MS };
+    localStorage.setItem("rentok_user", JSON.stringify(session));
+    setUser(session);
   };
 
   const handleLogout = () => {
@@ -2616,7 +3139,8 @@ export default function App() {
     </div>
   );
 
+  if(user?.type === "admin")  return <AdminDashboard admin={user} onLogout={handleLogout}/>;
   if(user?.type === "tenant") return <TenantDashboard tenant={user} onLogout={handleLogout}/>;
-  if(user?.type === "owner") return <OwnerDashboard owner={user} onLogout={handleLogout}/>;
+  if(user?.type === "owner")  return <OwnerDashboard owner={user} onLogout={handleLogout}/>;
   return <LoginScreen onLogin={handleLogin}/>;
 }
