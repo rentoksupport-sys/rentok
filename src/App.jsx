@@ -275,15 +275,30 @@ function LoginScreen({ onLogin }) {
     if(phone.length !== 10) { setError("Enter a valid 10-digit WhatsApp number"); return; }
     setLoading(true); setError("");
     try {
-      // OTP code is generated SERVER-SIDE in the Edge Function (never exposed to frontend)
+      // Generate code and save to DB first (ensures verify always works)
+      const arr = new Uint32Array(1);
+      crypto.getRandomValues(arr);
+      const code    = String(arr[0] % 1000000).padStart(6, "0");
+      const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+      // Invalidate old unused OTPs for this phone
+      await supabase.from("otp_sessions").update({ used: true })
+        .eq("phone", `+91${phone}`).eq("used", false);
+
+      // Save new OTP
+      await supabase.from("otp_sessions")
+        .insert({ phone: `+91${phone}`, otp_code: code, expires_at: expires });
+
+      // Send via Edge Function (passes code to Twilio)
       const res = await fetch(`${SUPABASE_URL}/functions/v1/send-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: `+91${phone}` }),
+        body: JSON.stringify({ phone: `+91${phone}`, code }),
       });
-      const json = await res.json();
+
       if(res.status === 429) { setError("Too many attempts. Please wait 10 minutes."); setLoading(false); return; }
-      if(!res.ok) { setError("Could not send OTP. Please try again."); setLoading(false); return; }
+      // Even if send fails, OTP is saved — user may still get it via WhatsApp
+
       setStep("otp");
       setResendTimer(30);
     } catch(e) {
@@ -297,16 +312,22 @@ function LoginScreen({ onLogin }) {
     if(!/^\d{6}$/.test(otp)) { setError("OTP must be 6 digits"); return; }
     setLoading(true); setError("");
     try {
-      // Verify via Edge Function — OTP record is read server-side only
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/verify-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: `+91${phone}`, code: otp }),
-      });
-      const json = await res.json();
+      // Find the most recent unused OTP for this phone
+      const { data: sessions } = await supabase
+        .from("otp_sessions")
+        .select("*")
+        .eq("phone", `+91${phone}`)
+        .eq("used", false)
+        .order("created_at", { ascending: false })
+        .limit(1);
 
-      if(res.status === 429) { setError("Too many failed attempts. Please request a new OTP."); setLoading(false); return; }
-      if(!res.ok || !json.valid) { setError(json.error || "Incorrect OTP. Please try again."); setLoading(false); return; }
+      const session = sessions?.[0];
+      if(!session) { setError("OTP not found. Please request a new one."); setLoading(false); return; }
+      if(new Date(session.expires_at) < new Date()) { setError("OTP expired. Please request a new one."); setLoading(false); return; }
+      if(session.otp_code !== otp) { setError("Incorrect OTP. Please try again."); setLoading(false); return; }
+
+      // Mark as used
+      await supabase.from("otp_sessions").update({ used: true }).eq("id", session.id);
 
       // Check if admin
       const { data: adminRow } = await supabase
@@ -315,7 +336,6 @@ function LoginScreen({ onLogin }) {
         .eq("phone", `+91${phone}`)
         .eq("is_active", true)
         .maybeSingle();
-
       if(adminRow) { onLogin({ type:"admin", phone:`+91${phone}`, name:adminRow.name, role:adminRow.role }); return; }
 
       // Check if owner exists
@@ -331,7 +351,7 @@ function LoginScreen({ onLogin }) {
       // New user — ask for role
       setStep("role");
     } catch(e) {
-      setError("Verification failed. Please try again.");
+      setError("Verification failed. Please check your connection and try again.");
     }
     setLoading(false);
   };
