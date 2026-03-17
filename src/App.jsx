@@ -267,9 +267,15 @@ function LoginScreen({ onLogin }) {
                     fontWeight:700, fontSize:12, marginLeft:8, cursor:"pointer" }}>Change</button>
               </div>
               <OtpInput value={otp} onChange={setOtp}/>
-              <div style={{ textAlign:"center", marginTop:10, padding:"7px 14px",
-                background:T.tealL, borderRadius:8, fontSize:11, fontWeight:600, color:T.teal }}>
-                📱 OTP sent to WhatsApp · Use <strong>123456</strong> if Twilio not set up yet
+              <div style={{ textAlign:"center", marginTop:10, padding:"9px 14px",
+                background:T.saffronL, border:`1px solid ${T.saffron}25`,
+                borderRadius:10, fontSize:12, color:T.ink2, lineHeight:1.6 }}>
+                🔐 During beta, use the access code sent to you on WhatsApp by the Rentok team.
+                <br/>
+                <span style={{ fontSize:11, color:T.muted }}>
+                  Haven't received it? Email <a href="mailto:rentoksupport@gmail.com"
+                  style={{ color:T.saffron, fontWeight:700, textDecoration:"none" }}>rentoksupport@gmail.com</a>
+                </span>
               </div>
               {error && <div style={{ color:T.rose, fontSize:12, marginTop:12,
                 textAlign:"center", fontWeight:600 }}>{error}</div>}
