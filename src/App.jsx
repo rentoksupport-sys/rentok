@@ -320,25 +320,42 @@ function LoginScreen({ onLogin }) {
     if(!/^\d{6}$/.test(otp)) { setError("OTP must be 6 digits"); return; }
     setLoading(true); setError("");
     try {
-      // Query filtered by the exact time this OTP was sent — prevents stale row collisions
-      let query = supabase
-        .from("otp_sessions")
-        .select("*")
-        .eq("phone", `+91${phone}`)
-        .eq("used", false)
-        .order("created_at", { ascending: false })
-        .limit(1);
 
-      const { data: sessions, error: readErr } = await query;
+      // ── Demo account bypass ──────────────────────────────────
+      // Only works for phones marked is_demo=true in demo_accounts table
+      if(otp === "123456") {
+        const { data: demoRow } = await supabase
+          .from("demo_accounts")
+          .select("*")
+          .eq("phone", `+91${phone}`)
+          .eq("is_active", true)
+          .maybeSingle();
 
-      if(readErr) { setError("DB read error: " + readErr.message); setLoading(false); return; }
+        if(!demoRow) {
+          setError("Incorrect OTP. Please try again.");
+          setLoading(false);
+          return;
+        }
+        // Demo account verified — fall through to role check below
+      } else {
+        // Normal OTP verification
+        const { data: sessions, error: readErr } = await supabase
+          .from("otp_sessions")
+          .select("*")
+          .eq("phone", `+91${phone}`)
+          .eq("used", false)
+          .order("created_at", { ascending: false })
+          .limit(1);
 
-      const session = sessions?.[0];
-      if(!session) { setError("OTP not found. Please request a new one."); setLoading(false); return; }
-      if(new Date(session.expires_at) < new Date()) { setError("OTP expired. Please request a new one."); setLoading(false); return; }
-      if(String(session.otp_code).trim() !== String(otp).trim()) { setError("Incorrect OTP. Please try again."); setLoading(false); return; }
+        if(readErr) { setError("DB read error: " + readErr.message); setLoading(false); return; }
 
-      await supabase.from("otp_sessions").update({ used: true }).eq("id", session.id);
+        const session = sessions?.[0];
+        if(!session) { setError("OTP not found. Please request a new one."); setLoading(false); return; }
+        if(new Date(session.expires_at) < new Date()) { setError("OTP expired. Please request a new one."); setLoading(false); return; }
+        if(String(session.otp_code).trim() !== String(otp).trim()) { setError("Incorrect OTP. Please try again."); setLoading(false); return; }
+
+        await supabase.from("otp_sessions").update({ used: true }).eq("id", session.id);
+      }
 
       // Check if admin
       try {
@@ -431,6 +448,48 @@ function LoginScreen({ onLogin }) {
                   color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
                 {loading ? <Spinner/> : "Send OTP on WhatsApp →"}
               </button>
+
+              {/* Demo login buttons — quick fill for test accounts */}
+              <div style={{ marginTop:20, padding:14, background:T.panel,
+                border:`1.5px dashed ${T.border2}`, borderRadius:12 }}>
+                <div style={{ fontSize:10, fontWeight:800, color:T.muted,
+                  letterSpacing:.5, textTransform:"uppercase", marginBottom:10 }}>
+                  🧪 Demo Accounts
+                </div>
+                <div style={{ display:"flex", gap:8 }}>
+                  {[
+                    { label:"👤 Owner", phone:"9999999999" },
+                    { label:"🏠 Tenant", phone:"8888888888" },
+                  ].map(d => (
+                    <button key={d.phone} onClick={async () => {
+                      setPhone(d.phone);
+                      setLoading(true); setError("");
+                      // Send OTP then auto-fetch and fill it
+                      const arr = new Uint32Array(1);
+                      crypto.getRandomValues(arr);
+                      const code = String(arr[0] % 1000000).padStart(6, "0");
+                      const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+                      await supabase.from("otp_sessions").update({ used:true }).eq("phone",`+91${d.phone}`).eq("used",false);
+                      await supabase.from("otp_sessions").insert({ phone:`+91${d.phone}`, otp_code:code, expires_at:expires });
+                      setOtpSentAt(new Date().toISOString());
+                      setStep("otp");
+                      setResendTimer(30);
+                      setOtp(code); // auto-fill OTP
+                      setLoading(false);
+                    }}
+                      style={{ flex:1, padding:"9px 6px", background:T.surface,
+                        border:`1.5px solid ${T.border2}`, borderRadius:10,
+                        fontSize:12, fontWeight:800, color:T.ink2,
+                        cursor:"pointer", fontFamily:"inherit" }}>
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ fontSize:10, color:T.muted, marginTop:8, textAlign:"center" }}>
+                  Auto-fills OTP · No WhatsApp needed
+                </div>
+              </div>
+
               <div style={{ textAlign:"center", marginTop:16, fontSize:12, color:T.muted }}>
                 New to Rentok?{" "}
                 <a href="https://docs.google.com/forms/d/e/1FAIpQLScd2tgV61wlCkJMfnQSOMa0ExM-c0ZpJVU1xOd6XD63Fs6pQA/viewform"
