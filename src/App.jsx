@@ -4,7 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 // ── SUPABASE CONFIG ──────────────────────────────────────────
 // Replace with your actual values from Supabase → Settings → API
 const SUPABASE_URL  = "https://xcjakihewzegzyumnyuw.supabase.co";
-const SUPABASE_ANON = "sb_publishable_ueuiI1Zp6NdCX7PIcAZzMg_5W-NyK2z";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhjamFraWhld3plZ3p5dW1ueXV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2ODcyNDIsImV4cCI6MjA4OTI2MzI0Mn0.HLwaK6PDdMap8SQ5ODz5XNSCKbCNnHkilO3HeuSVdyc";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // ── TWILIO CONFIG (via Supabase Edge Function) ───────────────
@@ -138,10 +138,7 @@ function LoginScreen({ onLogin }) {
       // Send WhatsApp OTP via Edge Function
       const res = await fetch(`${SUPABASE_URL}/functions/v1/send-otp`, {
         method:"POST",
-        headers:{
-          "Content-Type":"application/json",
-          "Authorization":`Bearer ${SUPABASE_ANON}`
-        },
+        headers:{ "Content-Type":"application/json" },
         body: JSON.stringify({ phone:`+91${phone}`, code }),
       });
 
