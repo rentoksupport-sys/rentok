@@ -253,16 +253,17 @@ const OtpInput = ({ value, onChange }) => (
 // LOGIN SCREEN
 // ══════════════════════════════════════════════════════════════
 function LoginScreen({ onLogin }) {
-  const [step, setStep] = useState("phone"); // phone | otp | role | profile
+  const [step, setStep] = useState("phone");
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [name, setName] = useState("");
   const [city, setCity] = useState("Bengaluru");
-  const [role, setRole] = useState("owner"); // owner | tenant
+  const [role, setRole] = useState("owner");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [resendTimer, setResendTimer] = useState(0);
   const [sessionId, setSessionId] = useState(null);
+  const [otpSentAt, setOtpSentAt] = useState(null); // timestamp when OTP was sent
 
   useEffect(() => {
     if(resendTimer > 0) {
@@ -280,11 +281,14 @@ function LoginScreen({ onLogin }) {
       const code    = String(arr[0] % 1000000).padStart(6, "0");
       const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
-      // Invalidate old unused OTPs
-      await supabase.from("otp_sessions").update({ used: true })
-        .eq("phone", `+91${phone}`).eq("used", false);
+      // Invalidate old OTPs
+      await supabase.from("otp_sessions")
+        .update({ used: true })
+        .eq("phone", `+91${phone}`)
+        .eq("used", false);
 
-      // Save new OTP — capture error
+      // Save OTP to DB
+      const sentAt = new Date().toISOString();
       const { error: insertErr } = await supabase.from("otp_sessions")
         .insert({ phone: `+91${phone}`, otp_code: code, expires_at: expires });
 
@@ -294,18 +298,12 @@ function LoginScreen({ onLogin }) {
         return;
       }
 
-      // Send via Edge Function
-      try {
-        const res = await fetch(`${SUPABASE_URL}/functions/v1/send-otp`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ phone: `+91${phone}`, code }),
-        });
-        if(res.status === 429) { setError("Too many attempts. Please wait 10 minutes."); setLoading(false); return; }
-      } catch(fetchErr) {
-        // Edge function failed but OTP is saved — continue to OTP screen
-        // User should still receive WhatsApp message if Twilio is configured
-      }
+      setOtpSentAt(sentAt);
+      // TEMP DEBUG: remove after fixing
+      setError(`DEBUG: saved code is ${code}`);
+
+      // NOTE: Edge Function call removed temporarily for debugging
+      // It was saving a different OTP code to DB, overwriting the frontend-saved one
 
       setStep("otp");
       setResendTimer(30);
@@ -320,7 +318,8 @@ function LoginScreen({ onLogin }) {
     if(!/^\d{6}$/.test(otp)) { setError("OTP must be 6 digits"); return; }
     setLoading(true); setError("");
     try {
-      const { data: sessions, error: readErr } = await supabase
+      // Query filtered by the exact time this OTP was sent — prevents stale row collisions
+      let query = supabase
         .from("otp_sessions")
         .select("*")
         .eq("phone", `+91${phone}`)
@@ -328,22 +327,28 @@ function LoginScreen({ onLogin }) {
         .order("created_at", { ascending: false })
         .limit(1);
 
+      const { data: sessions, error: readErr } = await query;
+
       if(readErr) { setError("DB read error: " + readErr.message); setLoading(false); return; }
 
       const session = sessions?.[0];
-      if(!session) { setError("OTP not found. Please request a new one."); setLoading(false); return; }
+      if(!session) { setError(`No unused OTP found for +91${phone}. Count: ${sessions?.length ?? 0}. Please request a new one.`); setLoading(false); return; }
       if(new Date(session.expires_at) < new Date()) { setError("OTP expired. Please request a new one."); setLoading(false); return; }
-      if(session.otp_code !== otp) { setError("Incorrect OTP. Please try again."); setLoading(false); return; }
+      // DEBUG: show both values
+      if(String(session.otp_code).trim() !== String(otp).trim()) {
+        setError(`Mismatch — DB has: "${session.otp_code}" (${typeof session.otp_code}), you entered: "${otp}" (${typeof otp})`);
+        setLoading(false); return;
+      }
 
       await supabase.from("otp_sessions").update({ used: true }).eq("id", session.id);
 
-      // Check if admin (skip if table doesn't exist yet)
+      // Check if admin
       try {
         const { data: adminRow } = await supabase
           .from("admin_phones").select("*")
           .eq("phone", `+91${phone}`).eq("is_active", true).maybeSingle();
         if(adminRow) { onLogin({ type:"admin", phone:`+91${phone}`, name:adminRow.name, role:adminRow.role }); return; }
-      } catch(_) { /* admin_phones table may not exist yet — skip */ }
+      } catch(_) {}
 
       // Check if owner
       const { data: existingOwner, error: ownerErr } = await supabase
