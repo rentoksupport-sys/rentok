@@ -2138,28 +2138,30 @@ function OwnerDashboard({ owner, onLogout }) {
       {/* Bottom nav */}
       <div style={{ position:"fixed", bottom:0, left:0, right:0, maxWidth:520,
         margin:"0 auto", background:T.surface, borderTop:`1.5px solid ${T.border}`,
-        display:"flex", zIndex:50 }}>
-        {tabs.map(t => (
-          <button key={t.id} onClick={()=>setTab(t.id)}
-            style={{ flex:1, padding:"9px 4px 10px", background:"none", border:"none",
-              display:"flex", flexDirection:"column", alignItems:"center", gap:2,
-              cursor:"pointer", color:tab===t.id?T.saffron:T.muted,
-              fontFamily:"inherit",
-              borderTop:`2.5px solid ${tab===t.id?T.saffron:"transparent"}`,
-              transition:"all .15s", position:"relative" }}>
-            <span style={{ fontSize:15 }}>{t.icon}</span>
-            <span style={{ fontSize:8, fontWeight:800 }}>{t.label}</span>
-            {t.id === "payments" && verifyCount > 0 && (
-              <div style={{ position:"absolute", top:6, right:"calc(50% - 14px)",
-                width:16, height:16, borderRadius:"50%", background:T.amber,
-                border:`2px solid ${T.surface}`, display:"flex",
-                alignItems:"center", justifyContent:"center",
-                fontSize:8, fontWeight:900, color:"#fff" }}>
-                {verifyCount}
-              </div>
-            )}
-          </button>
-        ))}
+        zIndex:50, overflowX:"auto", WebkitOverflowScrolling:"touch" }}>
+        <div style={{ display:"flex", minWidth:"max-content", width:"100%" }}>
+          {tabs.map(t => (
+            <button key={t.id} onClick={()=>setTab(t.id)}
+              style={{ flex:"0 0 72px", padding:"9px 4px 10px", background:"none", border:"none",
+                display:"flex", flexDirection:"column", alignItems:"center", gap:2,
+                cursor:"pointer", color:tab===t.id?T.saffron:T.muted,
+                fontFamily:"inherit",
+                borderTop:`2.5px solid ${tab===t.id?T.saffron:"transparent"}`,
+                transition:"all .15s", position:"relative" }}>
+              <span style={{ fontSize:18 }}>{t.icon}</span>
+              <span style={{ fontSize:8, fontWeight:800, whiteSpace:"nowrap" }}>{t.label}</span>
+              {t.id === "payments" && verifyCount > 0 && (
+                <div style={{ position:"absolute", top:6, right:"calc(50% - 14px)",
+                  width:16, height:16, borderRadius:"50%", background:T.amber,
+                  border:`2px solid ${T.surface}`, display:"flex",
+                  alignItems:"center", justifyContent:"center",
+                  fontSize:8, fontWeight:900, color:"#fff" }}>
+                  {verifyCount}
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
       </div>
 
       <Toast msg={toast}/>
