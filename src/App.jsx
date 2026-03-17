@@ -2629,19 +2629,53 @@ function AdminDashboard({ admin, onLogout }) {
 
   const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(null),3000); };
 
+  const [confirmDelete, setConfirmDelete] = useState(null); // owner object to confirm deletion
+  const [deleting, setDeleting] = useState(false);
+  const [units, setUnits] = useState([]);
+
+  const deleteOwner = async (owner) => {
+    setDeleting(true);
+    try {
+      // Delete in order: payments → expenses → maintenance_requests → tenants → units → properties → owner
+      const { data: ownerUnits } = await supabase.from("units").select("id").eq("owner_id", owner.id);
+      const unitIds = (ownerUnits||[]).map(u=>u.id);
+
+      if(unitIds.length > 0) {
+        await supabase.from("payments").delete().in("unit_id", unitIds);
+        await supabase.from("maintenance_requests").delete().in("unit_id", unitIds);
+        await supabase.from("tenants").delete().eq("owner_id", owner.id);
+        await supabase.from("units").delete().eq("owner_id", owner.id);
+      }
+      await supabase.from("expenses").delete().eq("owner_id", owner.id);
+      await supabase.from("properties").delete().eq("owner_id", owner.id);
+      await supabase.from("support_notes").delete().eq("entity_id", owner.id);
+      await supabase.from("owners").delete().eq("id", owner.id);
+
+      setConfirmDelete(null);
+      setSelOwner(null);
+      showToast(`${owner.name} deleted ✓`);
+      loadAll();
+    } catch(e) {
+      showToast("Delete failed: " + (e?.message||"unknown"));
+    }
+    setDeleting(false);
+  };
+
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [{ data: o }, { data: t }, { data: p }, { data: r }, { data: e }, { data: n }] = await Promise.all([
+      const [{ data: o }, { data: t }, { data: p }, { data: r }, { data: e }, { data: n }, { data: u }] = await Promise.all([
         supabase.from("owners").select("*").order("created_at", { ascending:false }),
         supabase.from("tenants").select("*, units(unit_number, rent_amount)").order("created_at", { ascending:false }),
         supabase.from("payments").select("*, units(unit_number), tenants(name), owners(name)").order("created_at", { ascending:false }).limit(200),
         supabase.from("maintenance_requests").select("*, units(unit_number), tenants(name)").order("created_at", { ascending:false }).limit(200),
         supabase.from("expenses").select("*, units(unit_number), owners(name)").order("date", { ascending:false }).limit(200),
         supabase.from("support_notes").select("*").order("created_at", { ascending:false }),
+        supabase.from("units").select("*, tenants(name, is_active)").order("created_at", { ascending:false }),
       ]);
       setOwners(o||[]); setTenants(t||[]); setPayments(p||[]);
       setRequests(r||[]); setExpenses(e||[]); setNotes(n||[]);
+      setUnits(u||[]);
     } catch(err) { console.error(err); }
     setLoading(false);
   }, []);
@@ -2691,73 +2725,196 @@ function AdminDashboard({ admin, onLogout }) {
     { id:"payments",  icon:"💰", label:"Payments"  },
     { id:"requests",  icon:"🔧", label:"Requests"  },
     { id:"expenses",  icon:"🧾", label:"Expenses"  },
+    { id:"cleanup",   icon:"🗑",  label:"Cleanup"   },
   ];
 
   // ── Detail panel for owner ──────────────────────────────────
   const OwnerPanel = ({ owner }) => {
-    const ownerNotes   = notesFor("owner", owner.id);
-    const ownerPayments = payments.filter(p => p.owners?.name === owner.name || p.owner_id === owner.id);
+    const ownerNotes    = notesFor("owner", owner.id);
+    const ownerPayments = payments.filter(p => p.owner_id === owner.id);
+    const ownerUnits    = units.filter(u => u.owner_id === owner.id);
+    const ownerTenants  = tenants.filter(t => t.owner_id === owner.id);
+    const ownerRequests = requests.filter(r => r.owner_id === owner.id);
+    const ownerExpenses = expenses.filter(e => e.owner_id === owner.id);
+    const [panelTab, setPanelTab] = useState("overview");
+
+    const PTABS = [
+      { id:"overview", label:"Overview" },
+      { id:"units",    label:`Units (${ownerUnits.length})` },
+      { id:"payments", label:`Payments (${ownerPayments.length})` },
+      { id:"requests", label:`Requests (${ownerRequests.length})` },
+      { id:"notes",    label:`Notes (${ownerNotes.length})` },
+    ];
+
     return (
-      <div style={{ position:"fixed", inset:0, zIndex:8000, background:"rgba(0,0,0,.5)",
+      <div style={{ position:"fixed", inset:0, zIndex:8000, background:"rgba(0,0,0,.55)",
         display:"flex", alignItems:"flex-end", justifyContent:"center" }}
         onClick={e=>{ if(e.target===e.currentTarget) setSelOwner(null); }}>
         <div className="fu" style={{ background:T.surface, borderRadius:"22px 22px 0 0",
-          width:"100%", maxWidth:520, maxHeight:"85vh", overflowY:"auto",
+          width:"100%", maxWidth:520, maxHeight:"90vh", overflowY:"auto",
           padding:"20px 18px 36px", boxShadow:"0 -8px 40px rgba(0,0,0,.2)" }}>
-          <div style={{ width:40, height:4, borderRadius:2, background:T.border2, margin:"0 auto 18px" }}/>
+          <div style={{ width:40, height:4, borderRadius:2, background:T.border2, margin:"0 auto 16px" }}/>
 
           {/* Owner header */}
-          <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:18 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
             <div style={{ width:48, height:48, borderRadius:14,
               background:`linear-gradient(135deg,${T.saffron},${T.saffronB})`,
               display:"flex", alignItems:"center", justifyContent:"center",
               fontSize:20, fontWeight:900, color:"#fff", flexShrink:0 }}>
               {(owner.name||"?")[0].toUpperCase()}
             </div>
-            <div>
+            <div style={{ flex:1 }}>
               <div style={{ fontSize:16, fontWeight:900, color:T.ink }}>{owner.name}</div>
               <div style={{ fontSize:12, color:T.muted }}>{owner.phone} · {owner.city||"—"}</div>
               <div style={{ fontSize:10, color:T.muted }}>Joined {fmt(owner.created_at)}</div>
             </div>
+            <button onClick={()=>setConfirmDelete(owner)}
+              style={{ background:T.roseL, border:`1px solid ${T.rose}30`,
+                borderRadius:9, padding:"6px 12px", fontSize:11,
+                fontWeight:800, color:T.rose, cursor:"pointer" }}>
+              🗑 Delete
+            </button>
           </div>
 
-          {/* Quick stats */}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:18 }}>
-            {[
-              { label:"Paid",    v: fd(ownerPayments.filter(p=>p.status==="paid").reduce((s,p)=>s+Number(p.amount),0)), color:T.teal },
-              { label:"Pending", v: ownerPayments.filter(p=>p.status==="pending").length + " bills", color:T.rose },
-              { label:"Verify",  v: ownerPayments.filter(p=>p.status==="verification_pending").length, color:T.amber },
-            ].map(s=>(
-              <div key={s.label} style={{ background:T.panel, borderRadius:11, padding:"10px 8px", textAlign:"center" }}>
-                <div style={{ fontSize:13, fontWeight:900, color:s.color }}>{s.v}</div>
-                <div style={{ fontSize:9, color:T.muted, fontWeight:700 }}>{s.label}</div>
-              </div>
+          {/* Panel tabs */}
+          <div style={{ display:"flex", gap:0, marginBottom:16, overflowX:"auto",
+            borderBottom:`1.5px solid ${T.border}` }}>
+            {PTABS.map(t=>(
+              <button key={t.id} onClick={()=>setPanelTab(t.id)}
+                style={{ flex:"0 0 auto", padding:"7px 12px", background:"none", border:"none",
+                  borderBottom:`2.5px solid ${panelTab===t.id?T.plum:"transparent"}`,
+                  color:panelTab===t.id?T.plum:T.muted, fontFamily:"inherit",
+                  fontSize:11, fontWeight:800, cursor:"pointer", whiteSpace:"nowrap" }}>
+                {t.label}
+              </button>
             ))}
           </div>
 
-          {/* Support notes */}
-          <div style={{ fontSize:12, fontWeight:800, color:T.ink, marginBottom:10 }}>🗒 Support Notes</div>
-          {ownerNotes.length === 0 && (
-            <div style={{ fontSize:12, color:T.muted, marginBottom:12 }}>No notes yet</div>
+          {/* OVERVIEW */}
+          {panelTab === "overview" && (
+            <>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:16 }}>
+                {[
+                  { label:"Units",    v: ownerUnits.length,      color:T.saffron },
+                  { label:"Tenants",  v: ownerTenants.filter(t=>t.is_active).length, color:T.teal },
+                  { label:"Collected",v: fd(ownerPayments.filter(p=>p.status==="paid").reduce((s,p)=>s+Number(p.amount),0)), color:T.teal },
+                  { label:"Pending",  v: ownerPayments.filter(p=>p.status==="pending").length+" bills", color:T.rose },
+                  { label:"Verify",   v: ownerPayments.filter(p=>p.status==="verification_pending").length, color:T.amber },
+                  { label:"Expenses", v: fd(ownerExpenses.reduce((s,e)=>s+Number(e.amount),0)), color:T.rose },
+                ].map(s=>(
+                  <div key={s.label} style={{ background:T.panel, borderRadius:11, padding:"10px 8px", textAlign:"center" }}>
+                    <div style={{ fontSize:13, fontWeight:900, color:s.color }}>{s.v}</div>
+                    <div style={{ fontSize:9, color:T.muted, fontWeight:700 }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+              {/* Open requests */}
+              {ownerRequests.filter(r=>r.status==="open").length > 0 && (
+                <div style={{ background:T.roseL, border:`1px solid ${T.rose}25`,
+                  borderRadius:11, padding:"10px 13px", marginBottom:12 }}>
+                  <div style={{ fontSize:12, fontWeight:800, color:T.rose, marginBottom:6 }}>
+                    🔧 {ownerRequests.filter(r=>r.status==="open").length} Open Maintenance Request(s)
+                  </div>
+                  {ownerRequests.filter(r=>r.status==="open").map(r=>(
+                    <div key={r.id} style={{ fontSize:11, color:T.ink, marginBottom:3 }}>
+                      • {r.title} — <span style={{ color:T.muted }}>{r.units?.unit_number}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
-          {ownerNotes.map(n=>(
-            <div key={n.id} style={{ background:T.panel, borderRadius:10, padding:"9px 12px", marginBottom:8,
-              border:`1px solid ${T.border}` }}>
-              <div style={{ fontSize:12, color:T.ink, lineHeight:1.5 }}>{n.note}</div>
-              <div style={{ fontSize:10, color:T.muted, marginTop:4 }}>{n.admin_name} · {fmt(n.created_at)}</div>
-            </div>
-          ))}
-          <div style={{ display:"flex", gap:8, marginTop:8 }}>
-            <input value={newNote} onChange={e=>setNewNote(e.target.value)}
-              placeholder="Add a support note…"
-              style={{ flex:1, background:T.panel, border:`1.5px solid ${T.border2}`,
-                color:T.ink, borderRadius:10, padding:"9px 12px", fontSize:12, fontWeight:600 }}/>
-            <button onClick={()=>addNote("owner", owner.id)} disabled={savingNote||!newNote.trim()}
-              style={{ background:T.saffron, border:"none", borderRadius:10,
-                padding:"9px 14px", fontSize:12, fontWeight:800, color:"#fff", cursor:"pointer" }}>
-              {savingNote ? "…" : "Save"}
-            </button>
-          </div>
+
+          {/* UNITS */}
+          {panelTab === "units" && (
+            ownerUnits.length === 0
+              ? <div style={{ fontSize:12, color:T.muted, textAlign:"center", padding:"20px 0" }}>No units</div>
+              : ownerUnits.map(u=>(
+                <div key={u.id} style={{ background:T.panel, borderRadius:11, padding:"10px 13px",
+                  marginBottom:9, border:`1px solid ${T.border}` }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <div>
+                      <div style={{ fontSize:13, fontWeight:800, color:T.ink }}>{u.unit_number}</div>
+                      <div style={{ fontSize:11, color:T.muted }}>{fd(u.rent_amount)}/mo · {u.type}</div>
+                      {u.tenants?.[0] && (
+                        <div style={{ fontSize:11, color:T.teal, marginTop:2 }}>👤 {u.tenants[0].name}</div>
+                      )}
+                    </div>
+                    <Chip label={u.is_occupied?"Occupied":"Vacant"} color={u.is_occupied?T.teal:T.rose}/>
+                  </div>
+                </div>
+              ))
+          )}
+
+          {/* PAYMENTS */}
+          {panelTab === "payments" && (
+            ownerPayments.length === 0
+              ? <div style={{ fontSize:12, color:T.muted, textAlign:"center", padding:"20px 0" }}>No payments</div>
+              : ownerPayments.slice(0,20).map(p=>(
+                <div key={p.id} style={{ background:T.panel, borderRadius:11, padding:"10px 13px",
+                  marginBottom:9, border:`1px solid ${p.status==="verification_pending"?T.amber+"40":T.border}` }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <div>
+                      <div style={{ fontSize:12, fontWeight:700, color:T.ink }}>
+                        {p.tenants?.name||"—"} · {p.units?.unit_number||"—"}
+                      </div>
+                      <div style={{ fontSize:10, color:T.muted }}>{p.type} · {fmt(p.due_date)}</div>
+                      {p.utr_number && <div style={{ fontSize:10, color:T.amber }}>UTR: {p.utr_number}</div>}
+                    </div>
+                    <div style={{ textAlign:"right" }}>
+                      <div style={{ fontSize:13, fontWeight:900, color:T.ink }}>{fd(p.amount)}</div>
+                      <Chip label={p.status==="verification_pending"?"Verify":p.status}
+                        color={p.status==="paid"?T.teal:p.status==="verification_pending"?T.amber:T.rose}/>
+                    </div>
+                  </div>
+                </div>
+              ))
+          )}
+
+          {/* REQUESTS */}
+          {panelTab === "requests" && (
+            ownerRequests.length === 0
+              ? <div style={{ fontSize:12, color:T.muted, textAlign:"center", padding:"20px 0" }}>No requests</div>
+              : ownerRequests.map(r=>(
+                <div key={r.id} style={{ background:T.panel, borderRadius:11, padding:"10px 13px",
+                  marginBottom:9, border:`1px solid ${T.border}` }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"start" }}>
+                    <div>
+                      <div style={{ fontSize:12, fontWeight:700, color:T.ink }}>{r.title}</div>
+                      <div style={{ fontSize:10, color:T.muted }}>{r.units?.unit_number} · {fmt(r.created_at)}</div>
+                    </div>
+                    <Chip label={r.status} color={r.status==="resolved"?T.teal:r.status==="in_progress"?T.amber:T.rose}/>
+                  </div>
+                </div>
+              ))
+          )}
+
+          {/* NOTES */}
+          {panelTab === "notes" && (
+            <>
+              {ownerNotes.length === 0 && (
+                <div style={{ fontSize:12, color:T.muted, marginBottom:12 }}>No notes yet</div>
+              )}
+              {ownerNotes.map(n=>(
+                <div key={n.id} style={{ background:T.panel, borderRadius:10, padding:"9px 12px",
+                  marginBottom:8, border:`1px solid ${T.border}` }}>
+                  <div style={{ fontSize:12, color:T.ink, lineHeight:1.5 }}>{n.note}</div>
+                  <div style={{ fontSize:10, color:T.muted, marginTop:4 }}>{n.admin_name} · {fmt(n.created_at)}</div>
+                </div>
+              ))}
+              <div style={{ display:"flex", gap:8, marginTop:8 }}>
+                <input value={newNote} onChange={e=>setNewNote(e.target.value)}
+                  placeholder="Add a support note…"
+                  style={{ flex:1, background:T.panel, border:`1.5px solid ${T.border2}`,
+                    color:T.ink, borderRadius:10, padding:"9px 12px", fontSize:12, fontWeight:600 }}/>
+                <button onClick={()=>addNote("owner", owner.id)} disabled={savingNote||!newNote.trim()}
+                  style={{ background:T.saffron, border:"none", borderRadius:10,
+                    padding:"9px 14px", fontSize:12, fontWeight:800, color:"#fff", cursor:"pointer" }}>
+                  {savingNote ? "…" : "Save"}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     );
@@ -3104,7 +3261,101 @@ function AdminDashboard({ admin, onLogout }) {
           </div>
         )}
 
+        {/* CLEANUP TAB */}
+        {tab === "cleanup" && (
+          <div style={{ padding:"18px 16px" }} className="fu">
+            <div style={{ fontWeight:800, fontSize:15, color:T.ink, marginBottom:6 }}>🗑 Account Cleanup</div>
+            <div style={{ fontSize:12, color:T.muted, marginBottom:18 }}>
+              Delete test or inactive accounts and all their associated data permanently.
+            </div>
+
+            {/* Warning banner */}
+            <div style={{ background:T.roseL, border:`1.5px solid ${T.rose}30`,
+              borderRadius:13, padding:"12px 14px", marginBottom:18 }}>
+              <div style={{ fontSize:12, fontWeight:800, color:T.rose, marginBottom:4 }}>
+                ⚠️ Irreversible Action
+              </div>
+              <div style={{ fontSize:11, color:T.ink2, lineHeight:1.6 }}>
+                Deleting an owner removes all their units, tenants, payments, expenses and maintenance requests permanently. This cannot be undone.
+              </div>
+            </div>
+
+            {/* Owner list with delete buttons */}
+            {owners.map(o => {
+              const oUnits    = units.filter(u => u.owner_id === o.id);
+              const oTenants  = tenants.filter(t => t.owner_id === o.id && t.is_active);
+              const oPayments = payments.filter(p => p.owner_id === o.id);
+              const isTestAccount = !oUnits.length && !oTenants.length;
+              return (
+                <div key={o.id} style={{ background:T.card,
+                  border:`1.5px solid ${isTestAccount?T.rose+"30":T.border}`,
+                  borderRadius:13, padding:"12px 14px", marginBottom:10 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"start" }}>
+                    <div style={{ flex:1 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+                        <div style={{ fontSize:13, fontWeight:800, color:T.ink }}>{o.name}</div>
+                        {isTestAccount && <Chip label="No data" color={T.rose}/>}
+                      </div>
+                      <div style={{ fontSize:11, color:T.muted }}>{o.phone} · {o.city||"—"}</div>
+                      <div style={{ fontSize:10, color:T.muted, marginTop:3 }}>
+                        {oUnits.length} units · {oTenants.length} active tenants · {oPayments.length} payments
+                      </div>
+                      <div style={{ fontSize:10, color:T.muted }}>Joined {fmt(o.created_at)}</div>
+                    </div>
+                    <button onClick={()=>setConfirmDelete(o)}
+                      style={{ background:T.roseL, border:`1px solid ${T.rose}30`,
+                        borderRadius:9, padding:"6px 12px", fontSize:11,
+                        fontWeight:800, color:T.rose, cursor:"pointer", flexShrink:0 }}>
+                      🗑 Delete
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {owners.length === 0 && (
+              <div style={{ textAlign:"center", padding:"40px 20px", color:T.muted }}>
+                <div style={{ fontSize:32, marginBottom:10 }}>✅</div>
+                <div style={{ fontSize:14, fontWeight:700 }}>No accounts to clean up</div>
+              </div>
+            )}
+          </div>
+        )}
+
       </div>
+
+      {/* Confirm delete modal */}
+      {confirmDelete && (
+        <div style={{ position:"fixed", inset:0, zIndex:9000, background:"rgba(0,0,0,.6)",
+          display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+          <div className="fu" style={{ background:T.surface, borderRadius:20,
+            padding:24, width:"100%", maxWidth:400,
+            boxShadow:"0 8px 40px rgba(0,0,0,.25)" }}>
+            <div style={{ fontSize:32, textAlign:"center", marginBottom:12 }}>⚠️</div>
+            <div style={{ fontSize:16, fontWeight:900, color:T.ink, textAlign:"center", marginBottom:8 }}>
+              Delete {confirmDelete.name}?
+            </div>
+            <div style={{ fontSize:12, color:T.muted, textAlign:"center", lineHeight:1.6, marginBottom:20 }}>
+              This will permanently delete this owner and ALL their units, tenants, payments, expenses and requests. This cannot be undone.
+            </div>
+            <div style={{ display:"flex", gap:10 }}>
+              <button onClick={()=>setConfirmDelete(null)} disabled={deleting}
+                style={{ flex:1, padding:"11px", background:T.panel,
+                  border:`1.5px solid ${T.border2}`, borderRadius:11,
+                  fontSize:13, fontWeight:700, color:T.muted, cursor:"pointer" }}>
+                Cancel
+              </button>
+              <button onClick={()=>deleteOwner(confirmDelete)} disabled={deleting}
+                style={{ flex:1, padding:"11px", background:T.rose,
+                  border:"none", borderRadius:11, fontSize:13,
+                  fontWeight:800, color:"#fff", cursor:"pointer",
+                  display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+                {deleting ? <Spinner/> : "Yes, Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Detail panels */}
       {selOwner  && <OwnerPanel  owner={selOwner}/>}
