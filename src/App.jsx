@@ -126,36 +126,29 @@ function LoginScreen({ onLogin }) {
       const code = Math.floor(100000 + Math.random() * 900000).toString();
       const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
-      // Save OTP session to Supabase
-      const { data, error: dbErr } = await supabase
-        .from("otp_sessions")
-        .insert({ phone:`+91${phone}`, otp_code:code, expires_at:expires })
-        .select("id").single();
+      // Try to save OTP session — don't block if it fails
+      try {
+        const { data } = await supabase
+          .from("otp_sessions")
+          .insert({ phone:`+91${phone}`, otp_code:code, expires_at:expires })
+          .select("id").single();
+        if(data) setSessionId(data.id);
+      } catch(dbErr) {
+        console.warn("DB save failed, continuing:", dbErr);
+      }
 
-      if(dbErr) throw dbErr;
-      setSessionId(data.id);
-
-      // Send WhatsApp OTP via Edge Function
+      // Send WhatsApp OTP via Edge Function — no auth header needed (JWT off)
       const res = await fetch(`${SUPABASE_URL}/functions/v1/send-otp`, {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone:`+91${phone}`, code }),
       });
 
-      if(!res.ok) {
-        // Fallback to dev bypass if edge function not deployed yet
-        console.warn("Edge function not available, using dev bypass");
-        setStep("otp");
-        setResendTimer(30);
-        setLoading(false);
-        return;
-      }
-
+      console.log("OTP send status:", res.status);
       setStep("otp");
       setResendTimer(30);
     } catch(e) {
-      // Graceful fallback for dev/testing
-      console.warn("OTP send failed, using dev bypass:", e);
+      console.warn("OTP send failed:", e);
       setStep("otp");
       setResendTimer(30);
     }
