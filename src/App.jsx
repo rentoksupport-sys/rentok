@@ -61,6 +61,157 @@ const Toast = ({ msg }) => msg ? (
     animation:"toastIn .25s ease", boxShadow:`0 8px 28px ${T.saffron}35` }}>{msg}</div>
 ) : null;
 
+// ── UPI PAY MODAL ────────────────────────────────────────────
+function UPIPayModal({ payment, tenant, onClose, onPaid }) {
+  const [step, setStep] = useState("choose"); // choose | confirm
+  const [utr, setUtr] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [utrError, setUtrError] = useState("");
+
+  const upiId = "rentoksupport@oksbi";
+  const amount = payment.amount;
+  const name = encodeURIComponent("Rentok");
+  const note = encodeURIComponent(`${payment.type} - ${tenant.name}`);
+  const upiLink = `upi://pay?pa=${upiId}&pn=${name}&am=${amount}&cu=INR&tn=${note}`;
+
+  const apps = [
+    { label:"Google Pay",   icon:"🟢", pkg:"com.google.android.apps.nbu.paisa.user",
+      url:`gpay://upi/pay?pa=${upiId}&pn=${name}&am=${amount}&cu=INR&tn=${note}` },
+    { label:"PhonePe",      icon:"🟣", pkg:"com.phonepe.app",
+      url:`phonepe://pay?pa=${upiId}&pn=${name}&am=${amount}&cu=INR&tn=${note}` },
+    { label:"Paytm",        icon:"🔵", pkg:"net.one97.paytm",
+      url:`paytmmp://pay?pa=${upiId}&pn=${name}&am=${amount}&cu=INR&tn=${note}` },
+    { label:"BHIM / Any UPI", icon:"🇮🇳", pkg:"",
+      url: upiLink },
+  ];
+
+  const submitUtr = async () => {
+    const clean = utr.trim().replace(/\s/g,"");
+    if(clean.length < 10) { setUtrError("Please enter a valid UTR / transaction ID (min 10 chars)"); return; }
+    setSubmitting(true); setUtrError("");
+    try {
+      await supabase.from("payments").update({
+        status: "verification_pending",
+        utr_number: clean,
+        paid_date: new Date().toISOString().split("T")[0],
+      }).eq("id", payment.id);
+      onPaid();
+    } catch(e) {
+      setUtrError("Could not save. Please try again.");
+    }
+    setSubmitting(false);
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:9000,
+      background:"rgba(0,0,0,.55)", display:"flex", alignItems:"flex-end",
+      justifyContent:"center" }} onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
+      <div className="fu" style={{ background:T.surface, borderRadius:"22px 22px 0 0",
+        width:"100%", maxWidth:520, padding:"24px 20px 36px",
+        boxShadow:"0 -8px 40px rgba(0,0,0,.18)" }}>
+
+        {/* Handle bar */}
+        <div style={{ width:40, height:4, borderRadius:2, background:T.border2,
+          margin:"0 auto 20px", opacity:.5 }}/>
+
+        {step === "choose" && (
+          <>
+            <div style={{ fontSize:17, fontWeight:900, color:T.ink, marginBottom:4 }}>
+              Pay {fd(amount)}
+            </div>
+            <div style={{ fontSize:12, color:T.muted, marginBottom:20 }}>
+              {payment.type} · UPI ID: <span style={{ color:T.ink, fontWeight:700 }}>{upiId}</span>
+            </div>
+
+            {/* QR placeholder — links to any UPI app */}
+            <a href={upiLink} style={{ display:"block", textDecoration:"none" }}>
+              <div style={{ background:T.panel, border:`2px dashed ${T.border2}`,
+                borderRadius:16, padding:"18px 12px", marginBottom:18, textAlign:"center" }}>
+                <div style={{ fontSize:48, marginBottom:6 }}>📲</div>
+                <div style={{ fontSize:12, fontWeight:700, color:T.ink }}>Tap to open UPI app</div>
+                <div style={{ fontSize:10, color:T.muted, marginTop:3 }}>Opens your default UPI app</div>
+              </div>
+            </a>
+
+            {/* App buttons */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9, marginBottom:20 }}>
+              {apps.map(app => (
+                <a key={app.label} href={app.url}
+                  style={{ display:"flex", alignItems:"center", gap:9, padding:"11px 13px",
+                    background:T.panel, border:`1.5px solid ${T.border2}`, borderRadius:13,
+                    textDecoration:"none", cursor:"pointer" }}>
+                  <span style={{ fontSize:22 }}>{app.icon}</span>
+                  <span style={{ fontSize:12, fontWeight:700, color:T.ink }}>{app.label}</span>
+                </a>
+              ))}
+            </div>
+
+            <button onClick={()=>setStep("confirm")}
+              style={{ width:"100%", padding:"13px", background:T.teal, border:"none",
+                borderRadius:13, fontSize:14, fontWeight:800, color:"#fff", cursor:"pointer" }}>
+              ✅ I've paid — Enter UTR →
+            </button>
+            <button onClick={onClose}
+              style={{ width:"100%", marginTop:9, padding:"11px", background:"none",
+                border:`1.5px solid ${T.border2}`, borderRadius:13, fontSize:13,
+                fontWeight:700, color:T.muted, cursor:"pointer" }}>
+              Cancel
+            </button>
+          </>
+        )}
+
+        {step === "confirm" && (
+          <>
+            <div style={{ fontSize:17, fontWeight:900, color:T.ink, marginBottom:4 }}>
+              Confirm Payment
+            </div>
+            <div style={{ fontSize:12, color:T.muted, marginBottom:20 }}>
+              Enter the UTR / Transaction ID from your UPI app
+            </div>
+
+            <div style={{ background:T.tealL, border:`1px solid ${T.teal}25`,
+              borderRadius:12, padding:"11px 13px", marginBottom:16,
+              fontSize:12, color:T.teal, fontWeight:600 }}>
+              📍 Find UTR in your UPI app under "Transaction Details" or "Payment History"
+            </div>
+
+            <div style={{ fontSize:10, fontWeight:700, color:T.muted,
+              letterSpacing:.5, textTransform:"uppercase", marginBottom:7 }}>
+              UTR / Transaction ID
+            </div>
+            <input
+              value={utr}
+              onChange={e=>{ setUtr(e.target.value); setUtrError(""); }}
+              placeholder="e.g. 402612345678 or T2506XXXXXX"
+              style={{ width:"100%", background:T.panel, border:`1.5px solid ${utrError?T.rose:T.border2}`,
+                color:T.ink, borderRadius:11, padding:"12px 14px", fontSize:14,
+                fontWeight:700, boxSizing:"border-box", letterSpacing:.3 }}
+            />
+            {utrError && (
+              <div style={{ color:T.rose, fontSize:12, marginTop:7, fontWeight:600 }}>{utrError}</div>
+            )}
+
+            <button onClick={submitUtr} disabled={submitting}
+              style={{ width:"100%", marginTop:16, padding:"13px",
+                background:`linear-gradient(135deg,${T.teal},${T.tealB})`,
+                border:"none", borderRadius:13, fontSize:14, fontWeight:800,
+                color:"#fff", cursor:"pointer", display:"flex",
+                alignItems:"center", justifyContent:"center", gap:8 }}>
+              {submitting ? <Spinner/> : "Submit for Verification →"}
+            </button>
+            <button onClick={()=>setStep("choose")}
+              style={{ width:"100%", marginTop:9, padding:"11px", background:"none",
+                border:`1.5px solid ${T.border2}`, borderRadius:13, fontSize:13,
+                fontWeight:700, color:T.muted, cursor:"pointer" }}>
+              ← Back
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── PHONE INPUT COMPONENT ────────────────────────────────────
 const PhoneInput = ({ value, onChange, disabled }) => (
   <div style={{ display:"flex", border:`1.5px solid ${T.border2}`, borderRadius:12,
@@ -528,7 +679,7 @@ function OwnerDashboard({ owner, onLogout }) {
     try {
       const [{ data: u }, { data: p }, { data: r }] = await Promise.all([
         supabase.from("units").select("*, tenants(*)").eq("owner_id", owner.id).order("unit_number"),
-        supabase.from("payments").select("*, units(unit_number), tenants(name)").eq("owner_id", owner.id).order("created_at", { ascending:false }).limit(50),
+        supabase.from("payments").select("*, units(unit_number), tenants(name, phone)").eq("owner_id", owner.id).order("created_at", { ascending:false }).limit(50),
         supabase.from("maintenance_requests").select("*, units(unit_number)").eq("owner_id", owner.id).order("created_at", { ascending:false }),
       ]);
       setUnits(u || []);
@@ -671,8 +822,26 @@ function OwnerDashboard({ owner, onLogout }) {
   };
 
   const markPaid = async (paymentId) => {
-    await supabase.from("payments").update({ status:"paid", paid_date:new Date().toISOString().split("T")[0] }).eq("id", paymentId);
-    showToast("Marked as paid ✓");
+    // Find the payment to check if it's a verification
+    const payment = payments.find(p => p.id === paymentId);
+    const isVerification = payment?.status === "verification_pending";
+
+    await supabase.from("payments").update({
+      status: "paid",
+      paid_date: new Date().toISOString().split("T")[0],
+    }).eq("id", paymentId);
+
+    showToast(isVerification ? "Payment verified ✓" : "Marked as paid ✓");
+
+    // If verifying, optionally open WhatsApp to notify tenant
+    if(isVerification && payment?.tenants?.phone) {
+      const phone = payment.tenants.phone.replace(/\D/g,"");
+      const num = phone.startsWith("91") ? phone : "91" + phone;
+      const name = (payment.tenants.name||"").split(" ")[0];
+      const msg = `Hi ${name}, your ${payment.type} payment of ${fd(payment.amount)} has been verified and confirmed. Thank you! - ${owner.name||"Your Landlord"} via Rentok`;
+      setTimeout(() => window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, "_blank"), 400);
+    }
+
     loadData();
   };
 
@@ -694,8 +863,9 @@ function OwnerDashboard({ owner, onLogout }) {
 
   const occupied = units.filter(u => u.is_occupied);
   const totalExpected = occupied.reduce((s,u) => s + Number(u.rent_amount), 0);
-  const pendingPayments = payments.filter(p => p.status === "pending");
-  const totalPending = pendingPayments.reduce((s,p) => s + Number(p.amount), 0);
+  const pendingPayments = payments.filter(p => p.status === "pending" || p.status === "verification_pending");
+  const totalPending = pendingPayments.filter(p=>p.status==="pending").reduce((s,p) => s + Number(p.amount), 0);
+  const verifyCount = payments.filter(p => p.status === "verification_pending").length;
   const openReqs = requests.filter(r => r.status === "open").length;
   const firstName = (owner.name||"").split(" ")[0] || "there";
 
@@ -985,22 +1155,35 @@ function OwnerDashboard({ owner, onLogout }) {
                 {pendingPayments.slice(0,5).map(p => (
                   <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10,
                     marginBottom:9, padding:"10px 13px", background:T.card,
-                    border:`1.5px solid ${T.border}`, borderRadius:13 }}>
-                    <div style={{ width:34, height:34, borderRadius:10, background:T.roseL,
+                    border:`1.5px solid ${p.status==="verification_pending"?T.amber+"50":T.border}`,
+                    borderRadius:13 }}>
+                    <div style={{ width:34, height:34, borderRadius:10,
+                      background:p.status==="verification_pending"?T.amberL:T.roseL,
                       display:"flex", alignItems:"center", justifyContent:"center",
-                      fontWeight:800, fontSize:11, color:T.rose, flexShrink:0 }}>
+                      fontWeight:800, fontSize:11,
+                      color:p.status==="verification_pending"?T.amber:T.rose, flexShrink:0 }}>
                       {(p.tenants?.name||"?").split(" ").map(w=>w[0]).join("").slice(0,2)}
                     </div>
                     <div style={{ flex:1 }}>
-                      <div style={{ fontSize:12, fontWeight:700, color:T.ink }}>{p.tenants?.name || "Tenant"}</div>
+                      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                        <div style={{ fontSize:12, fontWeight:700, color:T.ink }}>{p.tenants?.name || "Tenant"}</div>
+                        {p.status==="verification_pending" && <Chip label="Verify!" color={T.amber}/>}
+                      </div>
                       <div style={{ fontSize:10, color:T.muted }}>
                         {p.units?.unit_number} · {p.type} · {fd(p.amount)}
                       </div>
+                      {p.utr_number && (
+                        <div style={{ fontSize:10, color:T.amber, fontWeight:700 }}>UTR: {p.utr_number}</div>
+                      )}
                     </div>
                     <button onClick={()=>markPaid(p.id)}
-                      style={{ background:T.tealL, border:`1px solid ${T.teal}30`,
+                      style={{ background:p.status==="verification_pending"?T.amber:T.tealL,
+                        border:`1px solid ${p.status==="verification_pending"?T.amber:T.teal}30`,
                         borderRadius:8, padding:"5px 10px", fontSize:11,
-                        fontWeight:700, color:T.teal, cursor:"pointer" }}>✓ Paid</button>
+                        fontWeight:700, color:p.status==="verification_pending"?"#fff":T.teal,
+                        cursor:"pointer", flexShrink:0 }}>
+                      {p.status==="verification_pending"?"✅ Verify":"✓ Paid"}
+                    </button>
                   </div>
                 ))}
               </>
@@ -1565,7 +1748,33 @@ function OwnerDashboard({ owner, onLogout }) {
         {/* PAYMENTS TAB */}
         {tab === "payments" && (
           <div style={{ padding:"18px 16px" }} className="fu">
-            <div style={{ fontWeight:800, fontSize:15, color:T.ink, marginBottom:14 }}>Payments</div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+              <div style={{ fontWeight:800, fontSize:15, color:T.ink }}>Payments</div>
+              {verifyCount > 0 && (
+                <div style={{ background:T.amber, borderRadius:20, padding:"3px 10px",
+                  fontSize:11, fontWeight:800, color:"#fff" }}>
+                  {verifyCount} to verify ⚡
+                </div>
+              )}
+            </div>
+
+            {/* Verification banner */}
+            {verifyCount > 0 && (
+              <div style={{ background:T.amberL, border:`1.5px solid ${T.amber}40`,
+                borderRadius:14, padding:"12px 14px", marginBottom:16,
+                display:"flex", alignItems:"center", gap:10 }}>
+                <div style={{ fontSize:22 }}>🔔</div>
+                <div>
+                  <div style={{ fontSize:13, fontWeight:800, color:T.amber }}>
+                    {verifyCount} payment{verifyCount>1?"s":""} awaiting your verification
+                  </div>
+                  <div style={{ fontSize:11, color:T.ink2, marginTop:2 }}>
+                    Tenants have submitted UTR numbers — review and confirm below
+                  </div>
+                </div>
+              </div>
+            )}
+
             {payments.length === 0 && (
               <div style={{ textAlign:"center", padding:"40px 20px", color:T.muted }}>
                 <div style={{ fontSize:32, marginBottom:10 }}>💰</div>
@@ -1574,22 +1783,47 @@ function OwnerDashboard({ owner, onLogout }) {
               </div>
             )}
             {payments.map(p => (
-              <div key={p.id} style={{ background:T.card, border:`1.5px solid ${T.border}`,
+              <div key={p.id} style={{ background:T.card,
+                border:`1.5px solid ${p.status==="verification_pending"?T.amber+"60":T.border}`,
                 borderRadius:13, padding:"12px 14px", marginBottom:10 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"start", marginBottom:4 }}>
-                  <div>
+                  <div style={{ flex:1, marginRight:8 }}>
                     <div style={{ fontSize:13, fontWeight:700, color:T.ink }}>
                       {p.tenants?.name || "Tenant"} · {p.units?.unit_number}
                     </div>
                     <div style={{ fontSize:11, color:T.muted, marginTop:2 }}>
                       {p.type} · Due: {fmt(p.due_date)}
                     </div>
+                    {p.paid_date && (
+                      <div style={{ fontSize:11, color:T.teal, marginTop:1 }}>
+                        Paid: {fmt(p.paid_date)}
+                      </div>
+                    )}
+                    {p.utr_number && (
+                      <div style={{ fontSize:11, fontWeight:700, color:T.amber, marginTop:3,
+                        background:T.amberL, display:"inline-block",
+                        padding:"2px 8px", borderRadius:6 }}>
+                        UTR: {p.utr_number}
+                      </div>
+                    )}
                   </div>
                   <div style={{ textAlign:"right" }}>
                     <div style={{ fontSize:14, fontWeight:900, color:T.ink }}>{fd(p.amount)}</div>
-                    <Chip label={p.status} color={p.status==="paid"?T.teal:p.status==="overdue"?T.rose:T.amber}/>
+                    <Chip
+                      label={p.status==="verification_pending"?"Verify!":p.status}
+                      color={p.status==="paid"?T.teal:p.status==="verification_pending"?T.amber:p.status==="overdue"?T.rose:T.amber}
+                    />
                   </div>
                 </div>
+                {p.status === "verification_pending" && (
+                  <button onClick={()=>markPaid(p.id)}
+                    style={{ width:"100%", marginTop:10, padding:"9px",
+                      background:`linear-gradient(135deg,${T.amber},#F5B830)`,
+                      border:"none", borderRadius:9, fontSize:13, fontWeight:800,
+                      color:"#fff", cursor:"pointer" }}>
+                    ✅ Verify & Mark as Paid
+                  </button>
+                )}
                 {p.status === "pending" && (
                   <button onClick={()=>markPaid(p.id)}
                     style={{ width:"100%", marginTop:8, padding:"7px", background:T.tealL,
@@ -1656,9 +1890,18 @@ function OwnerDashboard({ owner, onLogout }) {
               cursor:"pointer", color:tab===t.id?T.saffron:T.muted,
               fontFamily:"inherit",
               borderTop:`2.5px solid ${tab===t.id?T.saffron:"transparent"}`,
-              transition:"all .15s" }}>
+              transition:"all .15s", position:"relative" }}>
             <span style={{ fontSize:15 }}>{t.icon}</span>
             <span style={{ fontSize:8, fontWeight:800 }}>{t.label}</span>
+            {t.id === "payments" && verifyCount > 0 && (
+              <div style={{ position:"absolute", top:6, right:"calc(50% - 14px)",
+                width:16, height:16, borderRadius:"50%", background:T.amber,
+                border:`2px solid ${T.surface}`, display:"flex",
+                alignItems:"center", justifyContent:"center",
+                fontSize:8, fontWeight:900, color:"#fff" }}>
+                {verifyCount}
+              </div>
+            )}
           </button>
         ))}
       </div>
@@ -1680,6 +1923,7 @@ function TenantDashboard({ tenant, onLogout }) {
   const [toast, setToast] = useState(null);
   const [newReq, setNewReq] = useState({ title:"", description:"", priority:"medium" });
   const [submitting, setSubmitting] = useState(false);
+  const [upiModal, setUpiModal] = useState(null); // payment object or null
 
   const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(null), 3000); };
   const firstName = (tenant.name||"").split(" ")[0] || "there";
@@ -1729,9 +1973,15 @@ function TenantDashboard({ tenant, onLogout }) {
     setSubmitting(false);
   };
 
-  const pending = payments.filter(p => p.status === "pending");
+  const pending = payments.filter(p => p.status === "pending" || p.status === "verification_pending");
   const paid = payments.filter(p => p.status === "paid");
-  const totalDue = pending.reduce((s,p) => s + Number(p.amount), 0);
+  const totalDue = pending.filter(p=>p.status==="pending").reduce((s,p) => s + Number(p.amount), 0);
+
+  const reloadPayments = async () => {
+    const { data: p } = await supabase.from("payments").select("*")
+      .eq("tenant_id", tenant.id).order("created_at", { ascending:false });
+    setPayments(p || []);
+  };
 
   const generateReceipt = (p) => {
     const lines = [
@@ -1836,22 +2086,43 @@ function TenantDashboard({ tenant, onLogout }) {
                   Pending Bills ({pending.length})
                 </div>
                 {pending.map(p => (
-                  <div key={p.id} style={{ background:T.card, border:`1.5px solid ${T.rose}25`,
+                  <div key={p.id} style={{ background:T.card,
+                    border:`1.5px solid ${p.status==="verification_pending"?T.amber+"50":T.rose+"25"}`,
                     borderRadius:13, padding:"12px 14px", marginBottom:10 }}>
                     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
                       <div>
                         <div style={{ fontSize:13, fontWeight:700, color:T.ink, textTransform:"capitalize" }}>{p.type}</div>
                         <div style={{ fontSize:11, color:T.muted }}>Due: {fmt(p.due_date)}</div>
+                        {p.utr_number && (
+                          <div style={{ fontSize:10, color:T.amber, fontWeight:700, marginTop:2 }}>
+                            UTR: {p.utr_number}
+                          </div>
+                        )}
                       </div>
-                      <div style={{ fontSize:18, fontWeight:900, color:T.rose }}>{fd(p.amount)}</div>
+                      <div style={{ textAlign:"right" }}>
+                        <div style={{ fontSize:18, fontWeight:900,
+                          color:p.status==="verification_pending"?T.amber:T.rose }}>{fd(p.amount)}</div>
+                        {p.status==="verification_pending" && (
+                          <Chip label="Verifying…" color={T.amber}/>
+                        )}
+                      </div>
                     </div>
-                    <a href={`upi://pay?pa=rentoksupport@oksbi&pn=Rentok&am=${p.amount}&cu=INR&tn=${p.type} - ${tenant.name}`}
-                      style={{ display:"block", width:"100%", padding:"9px",
-                        background:`linear-gradient(135deg,${T.saffron},${T.saffronB})`,
-                        border:"none", borderRadius:9, fontSize:13, fontWeight:800,
-                        color:"#fff", textAlign:"center", textDecoration:"none" }}>
-                      💳 Pay {fd(p.amount)} via UPI
-                    </a>
+                    {p.status === "pending" && (
+                      <button onClick={()=>setUpiModal(p)}
+                        style={{ display:"block", width:"100%", padding:"9px",
+                          background:`linear-gradient(135deg,${T.saffron},${T.saffronB})`,
+                          border:"none", borderRadius:9, fontSize:13, fontWeight:800,
+                          color:"#fff", textAlign:"center", cursor:"pointer" }}>
+                        💳 Pay {fd(p.amount)} via UPI
+                      </button>
+                    )}
+                    {p.status === "verification_pending" && (
+                      <div style={{ padding:"8px 12px", background:T.amberL,
+                        borderRadius:9, fontSize:12, fontWeight:700, color:T.amber,
+                        textAlign:"center" }}>
+                        ⏳ Payment submitted · Waiting for landlord to verify
+                      </div>
+                    )}
                   </div>
                 ))}
               </>
@@ -1898,27 +2169,41 @@ function TenantDashboard({ tenant, onLogout }) {
             )}
 
             {payments.map(p => (
-              <div key={p.id} style={{ background:T.card, border:`1.5px solid ${T.border}`,
+              <div key={p.id} style={{ background:T.card, border:`1.5px solid ${
+                p.status==="verification_pending"?T.amber+"40":T.border}`,
                 borderRadius:13, padding:"12px 14px", marginBottom:10 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"start", marginBottom:6 }}>
                   <div>
                     <div style={{ fontSize:13, fontWeight:700, color:T.ink, textTransform:"capitalize" }}>{p.type}</div>
                     <div style={{ fontSize:11, color:T.muted }}>Due: {fmt(p.due_date)}</div>
                     {p.paid_date && <div style={{ fontSize:11, color:T.teal }}>Paid: {fmt(p.paid_date)}</div>}
+                    {p.utr_number && (
+                      <div style={{ fontSize:10, color:T.amber, fontWeight:700, marginTop:2 }}>
+                        UTR: {p.utr_number}
+                      </div>
+                    )}
                   </div>
                   <div style={{ textAlign:"right" }}>
                     <div style={{ fontSize:15, fontWeight:900, color:T.ink }}>{fd(p.amount)}</div>
-                    <Chip label={p.status} color={p.status==="paid"?T.teal:p.status==="overdue"?T.rose:T.amber}/>
+                    <Chip label={p.status==="verification_pending"?"Verifying":p.status}
+                      color={p.status==="paid"?T.teal:p.status==="verification_pending"?T.amber:p.status==="overdue"?T.rose:T.amber}/>
                   </div>
                 </div>
                 <div style={{ display:"flex", gap:8, marginTop:8 }}>
                   {p.status === "pending" && (
-                    <a href={`upi://pay?pa=rentoksupport@oksbi&pn=Rentok&am=${p.amount}&cu=INR`}
+                    <button onClick={()=>setUpiModal(p)}
                       style={{ flex:2, padding:"7px", background:T.saffron, border:"none",
                         borderRadius:8, fontSize:12, fontWeight:700, color:"#fff",
-                        textAlign:"center", textDecoration:"none", display:"block" }}>
-                      Pay via UPI
-                    </a>
+                        textAlign:"center", cursor:"pointer" }}>
+                      💳 Pay via UPI
+                    </button>
+                  )}
+                  {p.status === "verification_pending" && (
+                    <div style={{ flex:2, padding:"7px", background:T.amberL,
+                      border:`1px solid ${T.amber}30`, borderRadius:8,
+                      fontSize:11, fontWeight:700, color:T.amber, textAlign:"center" }}>
+                      ⏳ Awaiting landlord verification
+                    </div>
                   )}
                   {p.status === "paid" && (
                     <button onClick={()=>generateReceipt(p)}
@@ -2015,6 +2300,20 @@ function TenantDashboard({ tenant, onLogout }) {
         ))}
       </div>
       <Toast msg={toast}/>
+
+      {/* UPI Pay Modal */}
+      {upiModal && (
+        <UPIPayModal
+          payment={upiModal}
+          tenant={tenant}
+          onClose={()=>setUpiModal(null)}
+          onPaid={()=>{
+            setUpiModal(null);
+            showToast("Payment submitted ✓ Awaiting landlord verification");
+            reloadPayments();
+          }}
+        />
+      )}
     </div>
   );
 }
