@@ -299,11 +299,13 @@ function LoginScreen({ onLogin }) {
       }
 
       setOtpSentAt(sentAt);
-      // TEMP DEBUG: remove after fixing
-      setError(`DEBUG: saved code is ${code}`);
 
-      // NOTE: Edge Function call removed temporarily for debugging
-      // It was saving a different OTP code to DB, overwriting the frontend-saved one
+      // Send WhatsApp via Edge Function (fire and forget)
+      fetch(`${SUPABASE_URL}/functions/v1/send-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: `+91${phone}`, code }),
+      }).catch(() => {});
 
       setStep("otp");
       setResendTimer(30);
@@ -332,13 +334,9 @@ function LoginScreen({ onLogin }) {
       if(readErr) { setError("DB read error: " + readErr.message); setLoading(false); return; }
 
       const session = sessions?.[0];
-      if(!session) { setError(`No unused OTP found for +91${phone}. Count: ${sessions?.length ?? 0}. Please request a new one.`); setLoading(false); return; }
+      if(!session) { setError("OTP not found. Please request a new one."); setLoading(false); return; }
       if(new Date(session.expires_at) < new Date()) { setError("OTP expired. Please request a new one."); setLoading(false); return; }
-      // DEBUG: show both values
-      if(String(session.otp_code).trim() !== String(otp).trim()) {
-        setError(`Mismatch — DB has: "${session.otp_code}" (${typeof session.otp_code}), you entered: "${otp}" (${typeof otp})`);
-        setLoading(false); return;
-      }
+      if(String(session.otp_code).trim() !== String(otp).trim()) { setError("Incorrect OTP. Please try again."); setLoading(false); return; }
 
       await supabase.from("otp_sessions").update({ used: true }).eq("id", session.id);
 
@@ -363,7 +361,7 @@ function LoginScreen({ onLogin }) {
 
       setStep("role");
     } catch(e) {
-      setError("Error: " + (e?.message || "unknown"));
+      setError("Verification failed. Please try again.");
     }
     setLoading(false);
   };
