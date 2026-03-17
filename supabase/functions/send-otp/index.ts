@@ -299,6 +299,8 @@ function LoginScreen({ onLogin }) {
       }
 
       setOtpSentAt(sentAt);
+      // TEMP DEBUG: remove after fixing
+      setError(`DEBUG: saved code is ${code}`);
 
       // Send WhatsApp via Edge Function (fire and forget — login works even if this fails)
       fetch(`${SUPABASE_URL}/functions/v1/send-otp`, {
