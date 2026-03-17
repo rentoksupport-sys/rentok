@@ -518,6 +518,8 @@ function OwnerDashboard({ owner, onLogout }) {
   const [newUnit, setNewUnit] = useState({ unit_number:"", rent_amount:"", deposit:"", type:"flat" });
   const [saving, setSaving] = useState(false);
   const [selUnit, setSelUnit] = useState(null);
+  const [editTenant, setEditTenant] = useState(null);
+  const [expandedTile, setExpandedTile] = useState(null);
 
   const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(null), 3000); };
 
@@ -817,22 +819,142 @@ function OwnerDashboard({ owner, onLogout }) {
               </div>
             </div>
 
-            {/* Stats grid */}
+            {/* Stats grid — expandable tiles */}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, marginBottom:18 }}>
               {[
-                { icon:"🏡", label:"Occupied", value:`${occupied.length}/${units.length}`, sub:`${units.length-occupied.length} vacant`, color:T.teal, light:T.tealL },
-                { icon:"⚠️", label:"Rent Pending", value:pendingPayments.length, sub:fd(totalPending)+" due", color:T.rose, light:T.roseL },
-                { icon:"🔧", label:"Open Requests", value:openReqs, sub:"maintenance", color:T.sky, light:T.skyL },
-                { icon:"📋", label:"Total Units", value:units.length, sub:"in portfolio", color:T.amber, light:T.amberL },
+                { id:"occupied", icon:"🏡", label:"Occupied", value:`${occupied.length}/${units.length}`, sub:`${units.length-occupied.length} vacant`, color:T.teal, light:T.tealL },
+                { id:"pending", icon:"⚠️", label:"Rent Pending", value:pendingPayments.length, sub:fd(totalPending)+" due", color:T.rose, light:T.roseL },
+                { id:"requests", icon:"🔧", label:"Open Requests", value:openReqs, sub:"maintenance", color:T.sky, light:T.skyL },
+                { id:"units", icon:"📋", label:"Total Units", value:units.length, sub:"in portfolio", color:T.amber, light:T.amberL },
               ].map(s => (
-                <div key={s.label} style={{ background:T.card, border:`1.5px solid ${T.border}`,
-                  borderRadius:14, padding:14 }}>
-                  <div style={{ width:32, height:32, borderRadius:9, background:s.light,
-                    display:"flex", alignItems:"center", justifyContent:"center",
-                    fontSize:15, marginBottom:7 }}>{s.icon}</div>
-                  <div style={{ fontSize:22, fontWeight:900, color:T.ink, letterSpacing:-.8 }}>{s.value}</div>
-                  <div style={{ fontSize:11, fontWeight:700, color:T.ink2, marginTop:1 }}>{s.label}</div>
-                  <div style={{ fontSize:10, color:T.muted, marginTop:1 }}>{s.sub}</div>
+                <div key={s.id} onClick={()=>setExpandedTile(expandedTile===s.id?null:s.id)}
+                  style={{ background:T.card,
+                    border:`1.5px solid ${expandedTile===s.id?s.color:T.border}`,
+                    borderRadius:14, padding:14, cursor:"pointer",
+                    transition:"all .15s", gridColumn: expandedTile===s.id ? "1 / -1" : "auto" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                    <div>
+                      <div style={{ width:32, height:32, borderRadius:9, background:s.light,
+                        display:"flex", alignItems:"center", justifyContent:"center",
+                        fontSize:15, marginBottom:7 }}>{s.icon}</div>
+                      <div style={{ fontSize:22, fontWeight:900, color:T.ink, letterSpacing:-.8 }}>{s.value}</div>
+                      <div style={{ fontSize:11, fontWeight:700, color:T.ink2, marginTop:1 }}>{s.label}</div>
+                      <div style={{ fontSize:10, color:T.muted, marginTop:1 }}>{s.sub}</div>
+                    </div>
+                    <div style={{ fontSize:12, color:T.muted }}>{expandedTile===s.id?"▲":"▼"}</div>
+                  </div>
+
+                  {/* Expanded content */}
+                  {expandedTile === s.id && (
+                    <div style={{ marginTop:12, borderTop:`1px solid ${s.color}25`, paddingTop:12 }}
+                      onClick={e=>e.stopPropagation()}>
+
+                      {/* OCCUPIED tile */}
+                      {s.id === "occupied" && (
+                        occupied.length === 0
+                          ? <div style={{ fontSize:12, color:T.muted, textAlign:"center", padding:"8px 0" }}>No occupied units</div>
+                          : occupied.map(u => {
+                              const t = u.tenants?.[0];
+                              return (
+                                <div key={u.id} style={{ display:"flex", alignItems:"center", gap:9,
+                                  marginBottom:8, padding:"8px 10px", background:T.tealL,
+                                  borderRadius:10, border:`1px solid ${T.teal}20` }}>
+                                  <div style={{ width:28, height:28, borderRadius:8, background:T.teal,
+                                    display:"flex", alignItems:"center", justifyContent:"center",
+                                    fontSize:10, fontWeight:800, color:"#fff", flexShrink:0 }}>
+                                    {(t?.name||"?").split(" ").map(w=>w[0]).join("").slice(0,2)}
+                                  </div>
+                                  <div style={{ flex:1 }}>
+                                    <div style={{ fontSize:12, fontWeight:700, color:T.ink }}>{t?.name||"No tenant"}</div>
+                                    <div style={{ fontSize:10, color:T.muted }}>{u.unit_number} · {fd(u.rent_amount)}/mo</div>
+                                  </div>
+                                  {t?.lease_end && (()=>{
+                                    const d = Math.ceil((new Date(t.lease_end)-today)/(1000*60*60*24));
+                                    const c = d<=15?T.rose:d<=30?T.amber:T.teal;
+                                    return <div style={{ fontSize:9,fontWeight:800,color:c,background:`${c}15`,padding:"2px 7px",borderRadius:20 }}>{d}d</div>;
+                                  })()}
+                                </div>
+                              );
+                            })
+                      )}
+
+                      {/* PENDING tile */}
+                      {s.id === "pending" && (
+                        pendingPayments.length === 0
+                          ? <div style={{ fontSize:12, color:T.muted, textAlign:"center", padding:"8px 0" }}>No pending payments 🎉</div>
+                          : <>
+                              {pendingPayments.slice(0,6).map(p => (
+                                <div key={p.id} style={{ display:"flex", alignItems:"center", gap:9,
+                                  marginBottom:8, padding:"8px 10px", background:T.roseL,
+                                  borderRadius:10, border:`1px solid ${T.rose}20` }}>
+                                  <div style={{ flex:1 }}>
+                                    <div style={{ fontSize:12, fontWeight:700, color:T.ink }}>{p.tenants?.name||"Tenant"}</div>
+                                    <div style={{ fontSize:10, color:T.muted }}>{p.units?.unit_number} · {p.type} · Due {fmt(p.due_date)}</div>
+                                  </div>
+                                  <div style={{ fontSize:13, fontWeight:900, color:T.rose }}>{fd(p.amount)}</div>
+                                  <button onClick={()=>markPaid(p.id)}
+                                    style={{ background:T.teal, border:"none", borderRadius:7,
+                                      padding:"4px 9px", fontSize:10, fontWeight:700,
+                                      color:"#fff", cursor:"pointer", flexShrink:0 }}>✓</button>
+                                </div>
+                              ))}
+                              <button onClick={()=>{
+                                const msgs = pendingPayments.map(p=>{
+                                  const ph = p.tenants?.phone?.replace(/\D/g,"");
+                                  if(!ph) return null;
+                                  return `https://wa.me/${ph.startsWith("91")?ph:"91"+ph}?text=Hi ${(p.tenants?.name||"").split(" ")[0]}, your ${p.type} of ${fd(p.amount)} is due. - ${owner.name||"Landlord"} via Rentok`;
+                                }).filter(Boolean);
+                                if(!msgs.length){showToast("No phone numbers saved");return;}
+                                msgs.forEach((url,i)=>setTimeout(()=>window.open(url,"_blank"),i*500));
+                                showToast(`WhatsApp opened for ${msgs.length} tenants`);
+                              }} style={{ width:"100%", padding:"8px", background:"#25D366",
+                                border:"none", borderRadius:9, fontSize:12, fontWeight:800,
+                                color:"#fff", cursor:"pointer", marginTop:4 }}>
+                                📱 Remind All ({pendingPayments.length})
+                              </button>
+                            </>
+                      )}
+
+                      {/* REQUESTS tile */}
+                      {s.id === "requests" && (
+                        requests.filter(r=>r.status==="open").length === 0
+                          ? <div style={{ fontSize:12, color:T.muted, textAlign:"center", padding:"8px 0" }}>No open requests 🎉</div>
+                          : requests.filter(r=>r.status==="open").map(r => (
+                              <div key={r.id} style={{ display:"flex", alignItems:"center", gap:9,
+                                marginBottom:8, padding:"8px 10px", background:T.skyL,
+                                borderRadius:10, border:`1px solid ${T.sky}20` }}>
+                                <div style={{ flex:1 }}>
+                                  <div style={{ fontSize:12, fontWeight:700, color:T.ink }}>{r.title}</div>
+                                  <div style={{ fontSize:10, color:T.muted }}>{r.units?.unit_number} · {fmt(r.created_at)}</div>
+                                </div>
+                                <Chip label={r.priority} color={r.priority==="high"?T.rose:r.priority==="medium"?T.amber:T.teal}/>
+                                <button onClick={()=>resolveRequest(r.id)}
+                                  style={{ background:T.teal, border:"none", borderRadius:7,
+                                    padding:"4px 9px", fontSize:10, fontWeight:700,
+                                    color:"#fff", cursor:"pointer", flexShrink:0 }}>✓</button>
+                              </div>
+                            ))
+                      )}
+
+                      {/* TOTAL UNITS tile */}
+                      {s.id === "units" && (
+                        units.length === 0
+                          ? <div style={{ fontSize:12, color:T.muted, textAlign:"center", padding:"8px 0" }}>No units yet</div>
+                          : units.map(u => (
+                              <div key={u.id} style={{ display:"flex", alignItems:"center", gap:9,
+                                marginBottom:8, padding:"8px 10px",
+                                background:u.is_occupied?T.tealL:T.panel,
+                                borderRadius:10, border:`1px solid ${u.is_occupied?T.teal+"20":T.border}` }}>
+                                <div style={{ flex:1 }}>
+                                  <div style={{ fontSize:12, fontWeight:700, color:T.ink }}>{u.unit_number}</div>
+                                  <div style={{ fontSize:10, color:T.muted }}>{fd(u.rent_amount)}/mo · {u.type}</div>
+                                </div>
+                                <Chip label={u.is_occupied?"Occupied":"Vacant"} color={u.is_occupied?T.teal:T.rose}/>
+                              </div>
+                            ))
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -1300,69 +1422,131 @@ function OwnerDashboard({ owner, onLogout }) {
                     <div style={{ borderTop:`1px solid ${T.border}`, padding:14, background:T.panel }}>
                       {tenant ? (
                         <>
-                          {/* Tenant info card */}
-                          <div style={{ background:T.surface, borderRadius:12, padding:14, marginBottom:12,
-                            border:`1px solid ${T.border}` }}>
-                            <div style={{ fontSize:12, fontWeight:800, color:T.teal, marginBottom:10 }}>
-                              👤 Tenant Details
-                            </div>
-                            {[
-                              ["Name", tenant.name],
-                              ["Phone", tenant.phone || "—"],
-                              ["Email", tenant.email || "—"],
-                              ["Move-in", fmt(tenant.move_in_date)],
-                              ["Lease ends", fmt(tenant.lease_end)],
-                            ].map(([l,v]) => (
-                              <div key={l} style={{ display:"flex", justifyContent:"space-between",
-                                marginBottom:7, fontSize:12 }}>
-                                <span style={{ color:T.muted, fontWeight:600 }}>{l}</span>
-                                <span style={{ color:T.ink, fontWeight:700 }}>{v}</span>
+                          {/* Edit Tenant Form */}
+                          {editTenant?.id === tenant.id ? (
+                            <div style={{ background:T.surface, borderRadius:12, padding:14,
+                              marginBottom:12, border:`1.5px solid ${T.saffron}40` }}>
+                              <div style={{ fontSize:12, fontWeight:800, color:T.saffron, marginBottom:12 }}>
+                                ✏️ Edit Tenant
                               </div>
-                            ))}
-
-                            {/* Lease status badge */}
-                            {tenant.lease_end && (()=>{
-                              const daysLeft = Math.ceil((new Date(tenant.lease_end) - today) / (1000*60*60*24));
-                              const color = daysLeft <= 15 ? T.rose : daysLeft <= 30 ? T.amber : daysLeft <= 60 ? T.sky : T.teal;
-                              const label = daysLeft < 0 ? "Lease expired" : daysLeft === 0 ? "Expires today" : `${daysLeft} days remaining`;
-                              return (
-                                <div style={{ marginTop:8, padding:"6px 10px",
-                                  background:`${color}12`, border:`1px solid ${color}30`,
-                                  borderRadius:8, fontSize:11, fontWeight:700, color }}>
-                                  📅 {label}
+                              {[
+                                { label:"Name *", key:"name", type:"text", placeholder:"Tenant name" },
+                                { label:"WhatsApp", key:"phone", type:"tel", placeholder:"e.g. +919876543210" },
+                                { label:"Email", key:"email", type:"email", placeholder:"email@example.com" },
+                                { label:"Move-in Date", key:"move_in_date", type:"date" },
+                                { label:"Lease End Date", key:"lease_end", type:"date" },
+                              ].map(f => (
+                                <div key={f.key} style={{ marginBottom:10 }}>
+                                  <div style={{ fontSize:10, fontWeight:700, color:T.muted,
+                                    letterSpacing:.5, textTransform:"uppercase", marginBottom:4 }}>{f.label}</div>
+                                  <input type={f.type} value={editTenant[f.key]||""}
+                                    onChange={e=>setEditTenant(p=>({...p,[f.key]:e.target.value}))}
+                                    placeholder={f.placeholder||""}
+                                    style={{ width:"100%", background:T.panel, border:`1.5px solid ${T.border2}`,
+                                      color:T.ink, borderRadius:9, padding:"9px 12px", fontSize:13,
+                                      fontWeight:600, boxSizing:"border-box" }}/>
                                 </div>
-                              );
-                            })()}
-                          </div>
-                          <div style={{ display:"flex", gap:8 }}>
-                            <button onClick={()=>vacateTenant(u.id, tenant.id)}
-                              style={{ flex:1, padding:"8px", background:T.roseL,
-                                border:`1px solid ${T.rose}30`, borderRadius:9,
-                                fontSize:12, fontWeight:700, color:T.rose, cursor:"pointer" }}>
-                              🚪 Vacated
-                            </button>
-                            <button onClick={async()=>{
-                              const newEnd = prompt("New lease end date (YYYY-MM-DD):", tenant.lease_end || "");
-                              if(!newEnd) return;
-                              await supabase.from("tenants").update({ lease_end:newEnd }).eq("id", tenant.id);
-                              showToast("Lease renewed ✓");
-                              loadData();
-                            }}
-                              style={{ flex:1, padding:"8px", background:T.skyL,
-                                border:`1px solid ${T.sky}30`, borderRadius:9,
-                                fontSize:12, fontWeight:700, color:T.sky, cursor:"pointer" }}>
-                              🔄 Renew
-                            </button>
-                            <button onClick={()=>{
-                              const wa = tenant.phone?.replace(/\D/g,"");
-                              if(wa) window.open(`https://wa.me/${wa.startsWith("91")?wa:"91"+wa}?text=Hi ${tenant.name.split(" ")[0]}, this is a reminder for your rent payment. Please pay at your earliest convenience. - ${owner.name||"Your Landlord"} via Rentok`, "_blank");
-                              else showToast("No phone number saved for this tenant");
-                            }} style={{ flex:1, padding:"8px", background:"#25D366",
-                              border:"none", borderRadius:9, fontSize:12,
-                              fontWeight:700, color:"#fff", cursor:"pointer" }}>
-                              📱 WA
-                            </button>
-                          </div>
+                              ))}
+                              <div style={{ display:"flex", gap:8, marginTop:4 }}>
+                                <button onClick={()=>setEditTenant(null)}
+                                  style={{ flex:1, padding:"8px", background:T.panel,
+                                    border:`1.5px solid ${T.border2}`, borderRadius:9,
+                                    fontSize:12, fontWeight:700, color:T.muted, cursor:"pointer" }}>
+                                  Cancel
+                                </button>
+                                <button onClick={async()=>{
+                                  if(!editTenant.name?.trim()){ showToast("Name is required"); return; }
+                                  await supabase.from("tenants").update({
+                                    name: editTenant.name.trim(),
+                                    phone: editTenant.phone?.trim() || null,
+                                    email: editTenant.email?.trim() || null,
+                                    move_in_date: editTenant.move_in_date || null,
+                                    lease_end: editTenant.lease_end || null,
+                                  }).eq("id", tenant.id);
+                                  setEditTenant(null);
+                                  showToast("Tenant updated ✓");
+                                  loadData();
+                                }}
+                                  style={{ flex:2, padding:"8px", background:T.saffron,
+                                    border:"none", borderRadius:9, fontSize:12,
+                                    fontWeight:800, color:"#fff", cursor:"pointer" }}>
+                                  Save Changes ✓
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              {/* Tenant info card */}
+                              <div style={{ background:T.surface, borderRadius:12, padding:14, marginBottom:12,
+                                border:`1px solid ${T.border}` }}>
+                                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                                  <div style={{ fontSize:12, fontWeight:800, color:T.teal }}>👤 Tenant Details</div>
+                                  <button onClick={()=>setEditTenant({...tenant})}
+                                    style={{ background:T.saffronL, border:`1px solid ${T.saffron}30`,
+                                      borderRadius:7, padding:"4px 10px", fontSize:11,
+                                      fontWeight:700, color:T.saffron, cursor:"pointer" }}>
+                                    ✏️ Edit
+                                  </button>
+                                </div>
+                                {[
+                                  ["Name", tenant.name],
+                                  ["Phone", tenant.phone || "—"],
+                                  ["Email", tenant.email || "—"],
+                                  ["Move-in", fmt(tenant.move_in_date)],
+                                  ["Lease ends", fmt(tenant.lease_end)],
+                                ].map(([l,v]) => (
+                                  <div key={l} style={{ display:"flex", justifyContent:"space-between",
+                                    marginBottom:7, fontSize:12 }}>
+                                    <span style={{ color:T.muted, fontWeight:600 }}>{l}</span>
+                                    <span style={{ color:T.ink, fontWeight:700 }}>{v}</span>
+                                  </div>
+                                ))}
+
+                                {/* Lease status badge */}
+                                {tenant.lease_end && (()=>{
+                                  const daysLeft = Math.ceil((new Date(tenant.lease_end) - today) / (1000*60*60*24));
+                                  const color = daysLeft <= 15 ? T.rose : daysLeft <= 30 ? T.amber : daysLeft <= 60 ? T.sky : T.teal;
+                                  const label = daysLeft < 0 ? "Lease expired" : daysLeft === 0 ? "Expires today" : `${daysLeft} days remaining`;
+                                  return (
+                                    <div style={{ marginTop:8, padding:"6px 10px",
+                                      background:`${color}12`, border:`1px solid ${color}30`,
+                                      borderRadius:8, fontSize:11, fontWeight:700, color }}>
+                                      📅 {label}
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                              <div style={{ display:"flex", gap:8 }}>
+                                <button onClick={()=>vacateTenant(u.id, tenant.id)}
+                                  style={{ flex:1, padding:"8px", background:T.roseL,
+                                    border:`1px solid ${T.rose}30`, borderRadius:9,
+                                    fontSize:12, fontWeight:700, color:T.rose, cursor:"pointer" }}>
+                                  🚪 Vacated
+                                </button>
+                                <button onClick={async()=>{
+                                  const newEnd = prompt("New lease end date (YYYY-MM-DD):", tenant.lease_end || "");
+                                  if(!newEnd) return;
+                                  await supabase.from("tenants").update({ lease_end:newEnd }).eq("id", tenant.id);
+                                  showToast("Lease renewed ✓");
+                                  loadData();
+                                }}
+                                  style={{ flex:1, padding:"8px", background:T.skyL,
+                                    border:`1px solid ${T.sky}30`, borderRadius:9,
+                                    fontSize:12, fontWeight:700, color:T.sky, cursor:"pointer" }}>
+                                  🔄 Renew
+                                </button>
+                                <button onClick={()=>{
+                                  const wa = tenant.phone?.replace(/\D/g,"");
+                                  if(wa) window.open(`https://wa.me/${wa.startsWith("91")?wa:"91"+wa}?text=Hi ${tenant.name.split(" ")[0]}, this is a reminder for your rent payment. Please pay at your earliest convenience. - ${owner.name||"Your Landlord"} via Rentok`, "_blank");
+                                  else showToast("No phone number saved for this tenant");
+                                }} style={{ flex:1, padding:"8px", background:"#25D366",
+                                  border:"none", borderRadius:9, fontSize:12,
+                                  fontWeight:700, color:"#fff", cursor:"pointer" }}>
+                                  📱 WA
+                                </button>
+                              </div>
+                            </>
+                          )}
                         </>
                       ) : (
                         /* Add tenant form */
