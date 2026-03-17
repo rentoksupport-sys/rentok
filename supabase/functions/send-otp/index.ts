@@ -327,16 +327,12 @@ function LoginScreen({ onLogin }) {
         .order("created_at", { ascending: false })
         .limit(1);
 
-      if(otpSentAt) {
-        query = query.gte("created_at", otpSentAt);
-      }
-
       const { data: sessions, error: readErr } = await query;
 
       if(readErr) { setError("DB read error: " + readErr.message); setLoading(false); return; }
 
       const session = sessions?.[0];
-      if(!session) { setError(`No session found. otpSentAt=${otpSentAt} sessions=${JSON.stringify(sessions)}`); setLoading(false); return; }
+      if(!session) { setError(`No unused OTP found for +91${phone}. Count: ${sessions?.length ?? 0}. Please request a new one.`); setLoading(false); return; }
       if(new Date(session.expires_at) < new Date()) { setError("OTP expired. Please request a new one."); setLoading(false); return; }
       // DEBUG: show both values
       if(String(session.otp_code).trim() !== String(otp).trim()) {
