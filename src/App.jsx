@@ -697,6 +697,51 @@ function OwnerDashboard({ owner, onLogout }) {
   const openReqs = requests.filter(r => r.status === "open").length;
   const firstName = (owner.name||"").split(" ")[0] || "there";
 
+  // ── LEASE TRACKING ───────────────────────────────────────────
+  const today = new Date();
+  today.setHours(0,0,0,0);
+
+  const leaseAlerts = units.filter(u => {
+    const tenant = u.tenants?.[0];
+    if(!tenant?.lease_end) return false;
+    const leaseEnd = new Date(tenant.lease_end);
+    const daysLeft = Math.ceil((leaseEnd - today) / (1000*60*60*24));
+    return daysLeft <= 60 && daysLeft >= 0;
+  }).map(u => {
+    const tenant = u.tenants[0];
+    const leaseEnd = new Date(tenant.lease_end);
+    const daysLeft = Math.ceil((leaseEnd - today) / (1000*60*60*24));
+    return { unit: u, tenant, daysLeft,
+      color: daysLeft <= 15 ? T.rose : daysLeft <= 30 ? T.amber : T.sky,
+      label: daysLeft === 0 ? "Expires today!" : daysLeft < 0 ? "Expired" : `${daysLeft} days left`
+    };
+  }).sort((a,b) => a.daysLeft - b.daysLeft);
+
+  // ── P&L FORECAST (6 months) ──────────────────────────────────
+  const pnlForecast = Array.from({length:6}, (_,i) => {
+    const d = new Date(today.getFullYear(), today.getMonth() + i, 1);
+    const monthLabel = d.toLocaleString("en-IN", { month:"short", year:"2-digit" });
+
+    // Count units that will still be occupied (lease not expired)
+    const activeUnits = occupied.filter(u => {
+      const tenant = u.tenants?.[0];
+      if(!tenant?.lease_end) return true; // no end date = assume active
+      return new Date(tenant.lease_end) >= d;
+    });
+
+    const expected = activeUnits.reduce((s,u) => s + Number(u.rent_amount), 0);
+
+    // Historical collected for past months
+    const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split("T")[0];
+    const monthEnd = new Date(d.getFullYear(), d.getMonth()+1, 0).toISOString().split("T")[0];
+    const collected = payments.filter(p =>
+      p.status === "paid" && p.paid_date >= monthStart && p.paid_date <= monthEnd
+    ).reduce((s,p) => s + Number(p.amount), 0);
+
+    const isFuture = d > today;
+    return { label:monthLabel, expected, collected: isFuture ? null : collected, isFuture };
+  });
+
   const tabs = [
     { id:"dashboard", icon:"📊", label:"Dashboard" },
     { id:"units", icon:"🏡", label:"Units" },
@@ -854,6 +899,244 @@ function OwnerDashboard({ owner, onLogout }) {
                 </button>
               </div>
             )}
+
+            {/* LEASE ALERTS */}
+            {leaseAlerts.length > 0 && (
+              <div style={{ marginTop:18 }}>
+                <div style={{ fontWeight:800, fontSize:13, color:T.ink, marginBottom:10 }}>
+                  🗓 Lease Alerts
+                </div>
+                {leaseAlerts.map(({ unit:u, tenant, daysLeft, color, label }) => (
+                  <div key={u.id} style={{ display:"flex", alignItems:"center", gap:10,
+                    marginBottom:9, padding:"11px 13px", background:T.card,
+                    border:`1.5px solid ${color}35`, borderRadius:13 }}>
+                    <div style={{ width:36, height:36, borderRadius:10,
+                      background:`${color}15`, display:"flex", alignItems:"center",
+                      justifyContent:"center", fontSize:16, flexShrink:0 }}>
+                      {daysLeft <= 15 ? "🔴" : daysLeft <= 30 ? "🟡" : "🔵"}
+                    </div>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:12, fontWeight:700, color:T.ink }}>
+                        {u.unit_number} · {tenant.name}
+                      </div>
+                      <div style={{ fontSize:10, color:T.muted, marginTop:1 }}>
+                        Lease ends {fmt(tenant.lease_end)}
+                      </div>
+                    </div>
+                    <div style={{ textAlign:"right" }}>
+                      <div style={{ fontSize:11, fontWeight:800, color,
+                        padding:"3px 9px", borderRadius:20,
+                        background:`${color}15`, border:`1px solid ${color}30` }}>
+                        {label}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* P&L FORECAST */}
+            {units.length > 0 && (
+              <div style={{ background:T.card, border:`1.5px solid ${T.border}`,
+                borderRadius:16, padding:16, marginTop:18 }}>
+                <div style={{ fontWeight:800, fontSize:13, color:T.ink, marginBottom:4 }}>
+                  📈 6-Month Revenue Forecast
+                </div>
+                <div style={{ fontSize:11, color:T.muted, marginBottom:14 }}>
+                  Based on current occupancy and lease end dates
+                </div>
+
+                {/* Bar chart */}
+                <div style={{ display:"flex", alignItems:"flex-end", gap:6, height:80, marginBottom:10 }}>
+                  {pnlForecast.map((m, i) => {
+                    const max = Math.max(...pnlForecast.map(x => x.expected)) || 1;
+                    const barH = Math.max(4, (m.expected / max) * 100);
+                    const collH = m.collected ? Math.max(2, (m.collected / max) * 100) : 0;
+                    return (
+                      <div key={i} style={{ flex:1, display:"flex", flexDirection:"column",
+                        alignItems:"center", gap:2, height:"100%", justifyContent:"flex-end" }}>
+                        <div style={{ width:"100%", position:"relative", height:`${barH}%`,
+                          minHeight:4, display:"flex", alignItems:"flex-end" }}>
+                          {/* Expected bar */}
+                          <div style={{ position:"absolute", bottom:0, left:0, right:0,
+                            height:"100%", background:`${T.saffron}25`,
+                            borderRadius:"4px 4px 0 0" }}/>
+                          {/* Collected/forecast bar */}
+                          <div style={{ position:"absolute", bottom:0, left:0, right:0,
+                            height:m.isFuture?`${barH}%`:`${collH}%`,
+                            background:m.isFuture
+                              ? `repeating-linear-gradient(45deg,${T.saffron}40,${T.saffron}40 2px,transparent 2px,transparent 6px)`
+                              : T.saffron,
+                            borderRadius:"4px 4px 0 0", transition:"height .3s" }}/>
+                        </div>
+                        <div style={{ fontSize:8, color:m.isFuture?T.muted:T.ink2,
+                          fontWeight:700, textAlign:"center" }}>{m.label}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Legend */}
+                <div style={{ display:"flex", gap:14, marginBottom:14 }}>
+                  {[
+                    { color:T.saffron, label:"Collected" },
+                    { color:`${T.saffron}40`, label:"Expected (forecast)" },
+                  ].map(l => (
+                    <div key={l.label} style={{ display:"flex", alignItems:"center", gap:5 }}>
+                      <div style={{ width:10, height:10, borderRadius:2, background:l.color }}/>
+                      <span style={{ fontSize:10, color:T.muted }}>{l.label}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Monthly breakdown */}
+                {pnlForecast.map((m, i) => (
+                  <div key={i} style={{ display:"flex", justifyContent:"space-between",
+                    alignItems:"center", padding:"7px 0",
+                    borderBottom: i < 5 ? `1px solid ${T.border}` : "none" }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <div style={{ width:6, height:6, borderRadius:"50%",
+                        background: m.isFuture ? T.muted : T.saffron }}/>
+                      <span style={{ fontSize:12, fontWeight:700,
+                        color: m.isFuture ? T.muted : T.ink }}>{m.label}</span>
+                      {m.isFuture && <span style={{ fontSize:9, color:T.muted,
+                        background:T.panel, padding:"1px 6px", borderRadius:10 }}>forecast</span>}
+                    </div>
+                    <div style={{ textAlign:"right" }}>
+                      <div style={{ fontSize:12, fontWeight:800,
+                        color: m.isFuture ? T.muted : T.ink }}>{fd(m.expected)}</div>
+                      {!m.isFuture && m.collected > 0 && (
+                        <div style={{ fontSize:10, color:T.teal }}>
+                          {fd(m.collected)} collected
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+
+                {/* Summary */}
+                <div style={{ marginTop:14, padding:"10px 12px",
+                  background:T.tealL, border:`1px solid ${T.teal}25`, borderRadius:10 }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:T.teal }}>
+                    6-month forecast total: {fd(pnlForecast.reduce((s,m)=>s+m.expected,0))}
+                    {leaseAlerts.length > 0 && (
+                      <span style={{ color:T.amber, marginLeft:8 }}>
+                        ⚠ {leaseAlerts.length} lease{leaseAlerts.length>1?"s":""} expiring
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* LEASE EXPIRY ALERTS */}
+            {leaseAlerts.length > 0 && (
+              <div style={{ marginTop:18 }}>
+                <div style={{ fontWeight:800, fontSize:13, color:T.ink, marginBottom:10 }}>
+                  ⏰ Lease Alerts ({leaseAlerts.length})
+                </div>
+                {leaseAlerts.map(({ unit:u, tenant, daysLeft, color, label }) => (
+                  <div key={u.id} style={{ display:"flex", alignItems:"center", gap:10,
+                    marginBottom:9, padding:"10px 13px", background:T.card,
+                    border:`1.5px solid ${color}35`, borderRadius:13 }}>
+                    <div style={{ width:34, height:34, borderRadius:10,
+                      background:`${color}15`, display:"flex", alignItems:"center",
+                      justifyContent:"center", fontWeight:800, fontSize:11, color, flexShrink:0 }}>
+                      {(tenant.name||"?").split(" ").map(w=>w[0]).join("").slice(0,2)}
+                    </div>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:12, fontWeight:700, color:T.ink }}>{tenant.name}</div>
+                      <div style={{ fontSize:10, color:T.muted }}>{u.unit_number} · Lease ends {fmt(tenant.lease_end)}</div>
+                    </div>
+                    <div style={{ padding:"3px 9px", borderRadius:20,
+                      background:`${color}15`, border:`1px solid ${color}30`,
+                      fontSize:10, fontWeight:800, color }}>{label}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* P&L FORECAST */}
+            {units.length > 0 && (
+              <div style={{ marginTop:18, background:T.card, border:`1.5px solid ${T.border}`,
+                borderRadius:16, padding:16 }}>
+                <div style={{ fontWeight:800, fontSize:13, color:T.ink, marginBottom:4 }}>
+                  📈 Revenue Forecast
+                </div>
+                <div style={{ fontSize:11, color:T.muted, marginBottom:14 }}>
+                  Based on current leases · 6-month outlook
+                </div>
+
+                {/* Bar chart */}
+                <div style={{ display:"flex", alignItems:"flex-end", gap:4, height:80, marginBottom:10 }}>
+                  {pnlForecast.map((m, i) => {
+                    const maxVal = Math.max(...pnlForecast.map(x => x.expected), 1);
+                    const expectedH = Math.round((m.expected / maxVal) * 80);
+                    const collectedH = m.collected ? Math.round((m.collected / maxVal) * 80) : 0;
+                    return (
+                      <div key={i} style={{ flex:1, display:"flex", flexDirection:"column",
+                        alignItems:"center", gap:2, height:"100%", justifyContent:"flex-end" }}>
+                        <div style={{ width:"100%", position:"relative", height:expectedH }}>
+                          {/* Expected bar (background) */}
+                          <div style={{ position:"absolute", bottom:0, left:0, right:0,
+                            height:"100%", background:`${T.saffron}20`,
+                            borderRadius:"3px 3px 0 0" }}/>
+                          {/* Collected bar (foreground) */}
+                          {collectedH > 0 && (
+                            <div style={{ position:"absolute", bottom:0, left:0, right:0,
+                              height:`${Math.round((collectedH/expectedH)*100)}%`,
+                              background:T.saffron, borderRadius:"3px 3px 0 0" }}/>
+                          )}
+                          {/* Future bar */}
+                          {m.isFuture && (
+                            <div style={{ position:"absolute", bottom:0, left:0, right:0,
+                              height:"100%", background:`${T.saffron}40`,
+                              borderRadius:"3px 3px 0 0",
+                              backgroundImage:`repeating-linear-gradient(45deg,transparent,transparent 2px,rgba(255,255,255,.3) 2px,rgba(255,255,255,.3) 4px)` }}/>
+                          )}
+                        </div>
+                        <div style={{ fontSize:8, color:T.muted, fontWeight:700 }}>{m.label}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Legend */}
+                <div style={{ display:"flex", gap:16, marginBottom:14 }}>
+                  {[["Collected",T.saffron],["Expected",`${T.saffron}20`],["Forecast","repeating-linear-gradient(45deg,transparent,transparent 2px,rgba(0,0,0,.1) 2px,rgba(0,0,0,.1) 4px)"]].map(([l,c],i)=>(
+                    <div key={l} style={{ display:"flex", alignItems:"center", gap:5 }}>
+                      <div style={{ width:10, height:10, borderRadius:2,
+                        background:i===2?`${T.saffron}40`:c, border:i===1?`1px solid ${T.saffron}40`:"none" }}/>
+                      <span style={{ fontSize:10, color:T.muted, fontWeight:600 }}>{l}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Summary row */}
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
+                  {[
+                    { label:"This Month", val:fd(pnlForecast[0]?.expected||0), sub:"expected", color:T.saffron },
+                    { label:"Next 3 Months", val:fd(pnlForecast.slice(1,4).reduce((s,m)=>s+m.expected,0)), sub:"forecast", color:T.teal },
+                    { label:"Annual Run Rate", val:"₹"+((totalExpected*12)/100000).toFixed(1)+"L", sub:"at full occupancy", color:T.plum },
+                  ].map(s => (
+                    <div key={s.label} style={{ background:T.panel, borderRadius:10, padding:"10px 8px", textAlign:"center" }}>
+                      <div style={{ fontSize:13, fontWeight:900, color:s.color, letterSpacing:-.5 }}>{s.val}</div>
+                      <div style={{ fontSize:9, color:T.muted, fontWeight:600, marginTop:2 }}>{s.label}</div>
+                      <div style={{ fontSize:8, color:T.subtle, marginTop:1 }}>{s.sub}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Vacancy risk warning */}
+                {leaseAlerts.length > 0 && (
+                  <div style={{ marginTop:12, background:T.amberL, border:`1px solid ${T.amber}30`,
+                    borderRadius:10, padding:"9px 12px", fontSize:12, color:T.amber, fontWeight:600 }}>
+                    ⚠️ {leaseAlerts.length} lease{leaseAlerts.length>1?"s":""} expiring soon —
+                    forecast may change if not renewed
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -994,6 +1277,17 @@ function OwnerDashboard({ owner, onLogout }) {
                           👤 {tenant.name}
                         </div>
                       )}
+                      {tenant?.lease_end && (()=>{
+                        const daysLeft = Math.ceil((new Date(tenant.lease_end) - today) / (1000*60*60*24));
+                        const color = daysLeft <= 15 ? T.rose : daysLeft <= 30 ? T.amber : T.teal;
+                        if(daysLeft > 60) return null;
+                        return (
+                          <div style={{ fontSize:10, fontWeight:700, color,
+                            marginBottom:2 }}>
+                            🗓 Lease: {daysLeft <= 0 ? "Expired" : `${daysLeft}d left`}
+                          </div>
+                        );
+                      })()}
                       <div style={{ fontSize:13, fontWeight:900, color:T.saffron }}>{fd(u.rent_amount)}/mo
                         {u.deposit && <span style={{ fontSize:10, color:T.muted, fontWeight:600 }}> · Deposit {fd(u.deposit)}</span>}
                       </div>
@@ -1025,22 +1319,48 @@ function OwnerDashboard({ owner, onLogout }) {
                                 <span style={{ color:T.ink, fontWeight:700 }}>{v}</span>
                               </div>
                             ))}
+
+                            {/* Lease status badge */}
+                            {tenant.lease_end && (()=>{
+                              const daysLeft = Math.ceil((new Date(tenant.lease_end) - today) / (1000*60*60*24));
+                              const color = daysLeft <= 15 ? T.rose : daysLeft <= 30 ? T.amber : daysLeft <= 60 ? T.sky : T.teal;
+                              const label = daysLeft < 0 ? "Lease expired" : daysLeft === 0 ? "Expires today" : `${daysLeft} days remaining`;
+                              return (
+                                <div style={{ marginTop:8, padding:"6px 10px",
+                                  background:`${color}12`, border:`1px solid ${color}30`,
+                                  borderRadius:8, fontSize:11, fontWeight:700, color }}>
+                                  📅 {label}
+                                </div>
+                              );
+                            })()}
                           </div>
                           <div style={{ display:"flex", gap:8 }}>
                             <button onClick={()=>vacateTenant(u.id, tenant.id)}
                               style={{ flex:1, padding:"8px", background:T.roseL,
                                 border:`1px solid ${T.rose}30`, borderRadius:9,
                                 fontSize:12, fontWeight:700, color:T.rose, cursor:"pointer" }}>
-                              🚪 Mark Vacated
+                              🚪 Vacated
+                            </button>
+                            <button onClick={async()=>{
+                              const newEnd = prompt("New lease end date (YYYY-MM-DD):", tenant.lease_end || "");
+                              if(!newEnd) return;
+                              await supabase.from("tenants").update({ lease_end:newEnd }).eq("id", tenant.id);
+                              showToast("Lease renewed ✓");
+                              loadData();
+                            }}
+                              style={{ flex:1, padding:"8px", background:T.skyL,
+                                border:`1px solid ${T.sky}30`, borderRadius:9,
+                                fontSize:12, fontWeight:700, color:T.sky, cursor:"pointer" }}>
+                              🔄 Renew
                             </button>
                             <button onClick={()=>{
                               const wa = tenant.phone?.replace(/\D/g,"");
-                              if(wa) window.open(`https://wa.me/${wa}?text=Hi ${tenant.name.split(" ")[0]}, this is a reminder for your rent payment. Please pay at your earliest convenience. - Rentok`, "_blank");
+                              if(wa) window.open(`https://wa.me/${wa.startsWith("91")?wa:"91"+wa}?text=Hi ${tenant.name.split(" ")[0]}, this is a reminder for your rent payment. Please pay at your earliest convenience. - ${owner.name||"Your Landlord"} via Rentok`, "_blank");
                               else showToast("No phone number saved for this tenant");
                             }} style={{ flex:1, padding:"8px", background:"#25D366",
                               border:"none", borderRadius:9, fontSize:12,
                               fontWeight:700, color:"#fff", cursor:"pointer" }}>
-                              📱 WhatsApp
+                              📱 WA
                             </button>
                           </div>
                         </>
