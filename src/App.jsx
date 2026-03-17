@@ -605,8 +605,11 @@ function OwnerDashboard({ owner, onLogout }) {
 
   const addUnit = async () => {
     if(!newUnit.unit_number || !newUnit.rent_amount) { showToast("Unit number and rent are required"); return; }
+    if(newUnit.status === "occupied" && !newUnit.tenant_name?.trim()) { showToast("Please enter tenant name"); return; }
     setSaving(true);
     try {
+      const isOccupied = newUnit.status === "occupied";
+
       // Get or create default property
       let { data: props } = await supabase.from("properties").select("id").eq("owner_id", owner.id).limit(1);
       let propId;
@@ -617,18 +620,51 @@ function OwnerDashboard({ owner, onLogout }) {
         propId = newProp.id;
       } else { propId = props[0].id; }
 
-      await supabase.from("units").insert({
+      // Create unit
+      const { data: unitData } = await supabase.from("units").insert({
         owner_id: owner.id, property_id: propId,
         unit_number: newUnit.unit_number,
         rent_amount: parseFloat(newUnit.rent_amount),
         deposit: newUnit.deposit ? parseFloat(newUnit.deposit) : null,
         type: newUnit.type,
-      });
-      setNewUnit({ unit_number:"", rent_amount:"", deposit:"", type:"flat" });
+        is_occupied: isOccupied,
+      }).select("*").single();
+
+      // If occupied, create tenant and first payment
+      if(isOccupied && unitData) {
+        const phone = newUnit.tenant_phone?.replace(/\D/g,"");
+        const { data: tenantData } = await supabase.from("tenants").insert({
+          owner_id: owner.id,
+          unit_id: unitData.id,
+          name: newUnit.tenant_name.trim(),
+          phone: phone ? `+91${phone}` : null,
+          email: newUnit.tenant_email?.trim() || null,
+          move_in_date: newUnit.tenant_move_in || null,
+          lease_end: newUnit.tenant_lease_end || null,
+          is_active: true,
+        }).select("*").single();
+
+        if(tenantData) {
+          await supabase.from("payments").insert({
+            owner_id: owner.id,
+            unit_id: unitData.id,
+            tenant_id: tenantData.id,
+            type: "rent",
+            amount: parseFloat(newUnit.rent_amount),
+            due_date: newUnit.tenant_move_in || new Date().toISOString().split("T")[0],
+            status: "pending",
+          });
+        }
+        showToast("Unit + tenant added ✓");
+      } else {
+        showToast("Unit added ✓");
+      }
+
+      setNewUnit({ unit_number:"", rent_amount:"", deposit:"", type:"flat", status:"vacant",
+        tenant_name:"", tenant_phone:"", tenant_email:"", tenant_move_in:"", tenant_lease_end:"" });
       setShowAddUnit(false);
-      showToast("Unit added ✓");
       loadData();
-    } catch(e) { showToast("Error adding unit"); }
+    } catch(e) { showToast("Error adding unit"); console.error(e); }
     setSaving(false);
   };
 
@@ -837,9 +873,21 @@ function OwnerDashboard({ owner, onLogout }) {
             {showAddUnit && (
               <div style={{ background:T.surface, border:`1.5px solid ${T.saffron}40`,
                 borderRadius:16, padding:18, marginBottom:18 }}>
-                <div style={{ fontWeight:800, fontSize:14, color:T.ink, marginBottom:14 }}>
-                  New Unit
+                <div style={{ fontWeight:800, fontSize:14, color:T.ink, marginBottom:14 }}>New Unit</div>
+
+                {/* Occupied / Vacant toggle */}
+                <div style={{ display:"flex", gap:8, marginBottom:16 }}>
+                  {[["vacant","🔓 Vacant"],["occupied","👤 Occupied"]].map(([v,l])=>(
+                    <button key={v} onClick={()=>setNewUnit(p=>({...p,status:v}))}
+                      style={{ flex:1, padding:"10px 8px", borderRadius:10,
+                        border:`2px solid ${(newUnit.status||"vacant")===v?T.saffron:T.border2}`,
+                        background:(newUnit.status||"vacant")===v?T.saffronL:T.panel,
+                        color:(newUnit.status||"vacant")===v?T.saffron:T.muted,
+                        fontSize:13, fontWeight:800, cursor:"pointer", fontFamily:"inherit" }}>{l}</button>
+                  ))}
                 </div>
+
+                {/* Unit details */}
                 {[
                   { label:"Unit Number *", key:"unit_number", placeholder:"e.g. Flat 1A, Room 3" },
                   { label:"Monthly Rent (₹) *", key:"rent_amount", placeholder:"e.g. 10000", type:"number" },
@@ -852,9 +900,11 @@ function OwnerDashboard({ owner, onLogout }) {
                       onChange={e=>setNewUnit(p=>({...p,[f.key]:e.target.value}))}
                       placeholder={f.placeholder}
                       style={{ width:"100%", background:T.panel, border:`1.5px solid ${T.border2}`,
-                        color:T.ink, borderRadius:10, padding:"10px 13px", fontSize:14, fontWeight:600 }}/>
+                        color:T.ink, borderRadius:10, padding:"10px 13px", fontSize:13, fontWeight:600 }}/>
                   </div>
                 ))}
+
+                {/* Unit type */}
                 <div style={{ marginBottom:14 }}>
                   <div style={{ fontSize:10, fontWeight:700, color:T.muted, letterSpacing:.5,
                     textTransform:"uppercase", marginBottom:6 }}>Type</div>
@@ -869,8 +919,37 @@ function OwnerDashboard({ owner, onLogout }) {
                     ))}
                   </div>
                 </div>
+
+                {/* Tenant details — only shown if Occupied */}
+                {(newUnit.status||"vacant") === "occupied" && (
+                  <div style={{ background:T.tealL, border:`1px solid ${T.teal}25`,
+                    borderRadius:12, padding:14, marginBottom:14 }}>
+                    <div style={{ fontSize:11, fontWeight:800, color:T.teal, marginBottom:12 }}>
+                      👤 Tenant Details
+                    </div>
+                    {[
+                      { label:"Tenant Name *", key:"tenant_name", placeholder:"e.g. Ramesh Kumar" },
+                      { label:"WhatsApp Number", key:"tenant_phone", placeholder:"e.g. 9876543210" },
+                      { label:"Email", key:"tenant_email", placeholder:"e.g. ramesh@gmail.com" },
+                      { label:"Move-in Date", key:"tenant_move_in", type:"date" },
+                      { label:"Lease End Date", key:"tenant_lease_end", type:"date" },
+                    ].map(f => (
+                      <div key={f.key} style={{ marginBottom:10 }}>
+                        <div style={{ fontSize:10, fontWeight:700, color:T.muted, letterSpacing:.5,
+                          textTransform:"uppercase", marginBottom:5 }}>{f.label}</div>
+                        <input type={f.type||"text"} value={newUnit[f.key]||""}
+                          onChange={e=>setNewUnit(p=>({...p,[f.key]:e.target.value}))}
+                          placeholder={f.placeholder||""}
+                          style={{ width:"100%", background:T.surface, border:`1.5px solid ${T.border2}`,
+                            color:T.ink, borderRadius:10, padding:"9px 12px", fontSize:13, fontWeight:600,
+                            boxSizing:"border-box" }}/>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div style={{ display:"flex", gap:8 }}>
-                  <button onClick={()=>setShowAddUnit(false)}
+                  <button onClick={()=>{setShowAddUnit(false);setNewUnit({unit_number:"",rent_amount:"",deposit:"",type:"flat",status:"vacant"});}}
                     style={{ flex:1, padding:10, background:T.panel, border:`1.5px solid ${T.border2}`,
                       borderRadius:10, fontSize:13, fontWeight:700, color:T.muted, cursor:"pointer" }}>
                     Cancel
@@ -879,7 +958,7 @@ function OwnerDashboard({ owner, onLogout }) {
                     style={{ flex:2, padding:10, background:T.saffron, border:"none",
                       borderRadius:10, fontSize:13, fontWeight:800, color:"#fff", cursor:"pointer",
                       display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
-                    {saving ? <Spinner/> : "Save Unit"}
+                    {saving ? <Spinner/> : (newUnit.status||"vacant")==="occupied" ? "Save Unit + Tenant →" : "Save Unit →"}
                   </button>
                 </div>
               </div>
