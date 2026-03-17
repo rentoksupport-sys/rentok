@@ -302,12 +302,8 @@ function LoginScreen({ onLogin }) {
       // TEMP DEBUG: remove after fixing
       setError(`DEBUG: saved code is ${code}`);
 
-      // Send WhatsApp via Edge Function (fire and forget — login works even if this fails)
-      fetch(`${SUPABASE_URL}/functions/v1/send-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: `+91${phone}`, code }),
-      }).catch(() => {});
+      // NOTE: Edge Function call removed temporarily for debugging
+      // It was saving a different OTP code to DB, overwriting the frontend-saved one
 
       setStep("otp");
       setResendTimer(30);
