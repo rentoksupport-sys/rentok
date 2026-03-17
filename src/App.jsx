@@ -70,7 +70,7 @@ function UPIPayModal({ payment, tenant, onClose, onPaid }) {
 
   const upiId = "rentoksupport@oksbi";
   const amount = payment.amount;
-  const name = encodeURIComponent("Rentok");
+  const name = encodeURIComponent("RentAI");
   const note = encodeURIComponent(`${payment.type} - ${tenant.name}`);
   const upiLink = `upi://pay?pa=${upiId}&pn=${name}&am=${amount}&cu=INR&tn=${note}`;
 
@@ -423,8 +423,8 @@ function LoginScreen({ onLogin }) {
             background:`linear-gradient(135deg,${T.saffron},${T.saffronB})`,
             display:"flex", alignItems:"center", justifyContent:"center",
             fontSize:32, margin:"0 auto 12px", boxShadow:`0 8px 24px ${T.saffron}35` }}>🔑</div>
-          <div style={{ fontSize:26, fontWeight:900, color:T.ink, letterSpacing:-.8 }}>Rentok</div>
-          <div style={{ fontSize:13, color:T.muted, marginTop:4 }}>Rent smarter. Manage better.</div>
+          <div style={{ fontSize:26, fontWeight:900, color:T.ink, letterSpacing:-.8 }}>RentAI</div>
+          <div style={{ fontSize:13, color:T.muted, marginTop:4 }}>AI-powered Rent Management</div>
         </div>
 
         <div style={{ background:T.surface, borderRadius:20, padding:28,
@@ -491,7 +491,7 @@ function LoginScreen({ onLogin }) {
               </div>
 
               <div style={{ textAlign:"center", marginTop:16, fontSize:12, color:T.muted }}>
-                New to Rentok?{" "}
+                New to RentAI?{" "}
                 <a href="https://docs.google.com/forms/d/e/1FAIpQLScd2tgV61wlCkJMfnQSOMa0ExM-c0ZpJVU1xOd6XD63Fs6pQA/viewform"
                   target="_blank" rel="noreferrer"
                   style={{ color:T.saffron, fontWeight:700, textDecoration:"none" }}>
@@ -515,11 +515,11 @@ function LoginScreen({ onLogin }) {
               <div style={{ textAlign:"center", marginTop:10, padding:"9px 14px",
                 background:T.saffronL, border:`1px solid ${T.saffron}25`,
                 borderRadius:10, fontSize:12, color:T.ink2, lineHeight:1.6 }}>
-                🔐 During beta, use the access code sent to you on WhatsApp by the Rentok team.
+                🔐 During beta, use the access code sent to you on WhatsApp by the RentAI team.
                 <br/>
                 <span style={{ fontSize:11, color:T.muted }}>
-                  Haven't received it? Email <a href="mailto:rentoksupport@gmail.com"
-                  style={{ color:T.saffron, fontWeight:700, textDecoration:"none" }}>rentoksupport@gmail.com</a>
+                  Haven't received it? Email <a href="mailto:support@rentai.co.in"
+                  style={{ color:T.saffron, fontWeight:700, textDecoration:"none" }}>support@rentai.co.in</a>
                 </span>
               </div>
               {error && <div style={{ color:T.rose, fontSize:12, marginTop:12,
@@ -549,7 +549,7 @@ function LoginScreen({ onLogin }) {
           {/* STEP: ROLE */}
           {step === "role" && (
             <>
-              <div style={{ fontSize:18, fontWeight:900, color:T.ink, marginBottom:6 }}>Welcome to Rentok! 🎉</div>
+              <div style={{ fontSize:18, fontWeight:900, color:T.ink, marginBottom:6 }}>Welcome to RentAI! 🎉</div>
               <div style={{ fontSize:13, color:T.muted, marginBottom:24 }}>Are you a property owner or a tenant?</div>
               <div style={{ display:"flex", gap:12, marginBottom:20 }}>
                 {[["owner","🏢","Property Owner","Manage flats & collect rent"],
@@ -598,7 +598,7 @@ function LoginScreen({ onLogin }) {
                   background:`linear-gradient(135deg,${T.saffron},${T.saffronB})`,
                   border:"none", borderRadius:12, fontSize:15, fontWeight:800,
                   color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-                {loading ? <Spinner/> : "Enter Rentok →"}
+                {loading ? <Spinner/> : "Enter RentAI →"}
               </button>
             </>
           )}
@@ -920,7 +920,7 @@ function OwnerDashboard({ owner, onLogout }) {
       const phone = payment.tenants.phone.replace(/\D/g,"");
       const num = phone.startsWith("91") ? phone : "91" + phone;
       const name = (payment.tenants.name||"").split(" ")[0];
-      const msg = `Hi ${name}, your ${payment.type} payment of ${fd(payment.amount)} has been verified and confirmed. Thank you! - ${owner.name||"Your Landlord"} via Rentok`;
+      const msg = `Hi ${name}, your ${payment.type} payment of ${fd(payment.amount)} has been verified and confirmed. Thank you! - ${owner.name||"Your Landlord"} via RentAI`;
       setTimeout(() => window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, "_blank"), 400);
     }
 
@@ -1086,7 +1086,7 @@ function OwnerDashboard({ owner, onLogout }) {
             background:`linear-gradient(135deg,${T.saffron},${T.saffronB})`,
             display:"flex", alignItems:"center", justifyContent:"center", fontSize:15 }}>🔑</div>
           <div>
-            <div style={{ fontWeight:900, fontSize:14, color:T.ink, letterSpacing:-.3 }}>Rentok</div>
+            <div style={{ fontWeight:900, fontSize:14, color:T.ink, letterSpacing:-.3 }}>RentAI</div>
             <div style={{ fontSize:9, color:T.muted }}>{owner.name || owner.phone} · Owner</div>
           </div>
         </div>
@@ -1213,7 +1213,7 @@ function OwnerDashboard({ owner, onLogout }) {
                                 const msgs = pendingPayments.map(p=>{
                                   const ph = p.tenants?.phone?.replace(/\D/g,"");
                                   if(!ph) return null;
-                                  return `https://wa.me/${ph.startsWith("91")?ph:"91"+ph}?text=Hi ${(p.tenants?.name||"").split(" ")[0]}, your ${p.type} of ${fd(p.amount)} is due. - ${owner.name||"Landlord"} via Rentok`;
+                                  return `https://wa.me/${ph.startsWith("91")?ph:"91"+ph}?text=Hi ${(p.tenants?.name||"").split(" ")[0]}, your ${p.type} of ${fd(p.amount)} is due. - ${owner.name||"Landlord"} via RentAI`;
                                 }).filter(Boolean);
                                 if(!msgs.length){showToast("No phone numbers saved");return;}
                                 msgs.forEach((url,i)=>setTimeout(()=>window.open(url,"_blank"),i*500));
@@ -1281,7 +1281,7 @@ function OwnerDashboard({ owner, onLogout }) {
                     const msgs = pendingPayments.slice(0,5).map(p => {
                       const phone = p.tenants?.phone?.replace(/\D/g,"");
                       if(!phone) return null;
-                      return `https://wa.me/${phone.startsWith("91")?phone:"91"+phone}?text=Hi ${(p.tenants?.name||"").split(" ")[0]}, your ${p.type} of ${fd(p.amount)} is due. Please pay at your earliest. - ${owner.name||"Your Landlord"} via Rentok`;
+                      return `https://wa.me/${phone.startsWith("91")?phone:"91"+phone}?text=Hi ${(p.tenants?.name||"").split(" ")[0]}, your ${p.type} of ${fd(p.amount)} is due. Please pay at your earliest. - ${owner.name||"Your Landlord"} via RentAI`;
                     }).filter(Boolean);
                     if(msgs.length === 0) { showToast("No phone numbers saved for pending tenants"); return; }
                     msgs.forEach((url, i) => setTimeout(()=>window.open(url,"_blank"), i*500));
@@ -1861,7 +1861,7 @@ function OwnerDashboard({ owner, onLogout }) {
                                 </button>
                                 <button onClick={()=>{
                                   const wa = tenant.phone?.replace(/\D/g,"");
-                                  if(wa) window.open(`https://wa.me/${wa.startsWith("91")?wa:"91"+wa}?text=Hi ${tenant.name.split(" ")[0]}, this is a reminder for your rent payment. Please pay at your earliest convenience. - ${owner.name||"Your Landlord"} via Rentok`, "_blank");
+                                  if(wa) window.open(`https://wa.me/${wa.startsWith("91")?wa:"91"+wa}?text=Hi ${tenant.name.split(" ")[0]}, this is a reminder for your rent payment. Please pay at your earliest convenience. - ${owner.name||"Your Landlord"} via RentAI`, "_blank");
                                   else showToast("No phone number saved for this tenant");
                                 }} style={{ flex:1, padding:"8px", background:"#25D366",
                                   border:"none", borderRadius:9, fontSize:12,
@@ -2334,7 +2334,7 @@ function TenantDashboard({ tenant, onLogout }) {
 
   const generateReceipt = (p) => {
     const lines = [
-      "RENTOK PAYMENT RECEIPT",
+      "RENTAI PAYMENT RECEIPT",
       "─────────────────────────",
       `Tenant: ${tenant.name}`,
       `Unit: ${unit?.unit_number || "—"}`,
@@ -2344,12 +2344,12 @@ function TenantDashboard({ tenant, onLogout }) {
       `Paid Date: ${fmt(p.paid_date)}`,
       `Status: ${p.status.toUpperCase()}`,
       "─────────────────────────",
-      "Powered by Rentok",
+      "Powered by RentAI",
     ].join("\n");
     const blob = new Blob([lines], { type:"text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `Rentok_Receipt_${p.type}_${p.due_date}.txt`;
+    a.href = url; a.download = `RentAI_Receipt_${p.type}_${p.due_date}.txt`;
     a.click(); URL.revokeObjectURL(url);
     showToast("Receipt downloaded ✓");
   };
@@ -2383,7 +2383,7 @@ function TenantDashboard({ tenant, onLogout }) {
             background:`linear-gradient(135deg,${T.teal},${T.tealB})`,
             display:"flex", alignItems:"center", justifyContent:"center", fontSize:15 }}>🏠</div>
           <div>
-            <div style={{ fontWeight:900, fontSize:14, color:T.ink, letterSpacing:-.3 }}>Rentok</div>
+            <div style={{ fontWeight:900, fontSize:14, color:T.ink, letterSpacing:-.3 }}>RentAI</div>
             <div style={{ fontSize:9, color:T.muted }}>{tenant.name} · Tenant Portal</div>
           </div>
         </div>
@@ -3051,7 +3051,7 @@ function AdminDashboard({ admin, onLogout }) {
           <div style={{ width:30, height:30, borderRadius:9, background:"rgba(255,255,255,.2)",
             display:"flex", alignItems:"center", justifyContent:"center", fontSize:15 }}>🛡</div>
           <div>
-            <div style={{ fontWeight:900, fontSize:14, color:"#fff", letterSpacing:-.3 }}>Rentok Admin</div>
+            <div style={{ fontWeight:900, fontSize:14, color:"#fff", letterSpacing:-.3 }}>RentAI Admin</div>
             <div style={{ fontSize:9, color:"rgba(255,255,255,.7)" }}>{admin.name} · {admin.role}</div>
           </div>
         </div>
@@ -3434,13 +3434,13 @@ export default function App() {
   const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
   useEffect(() => {
-    const saved = localStorage.getItem("rentok_user");
+    const saved = localStorage.getItem("rentai_user");
     if(saved) {
       try {
         const parsed = JSON.parse(saved);
         // Check session expiry
         if(!parsed.session_exp || Date.now() > parsed.session_exp) {
-          localStorage.removeItem("rentok_user");
+          localStorage.removeItem("rentai_user");
           setChecking(false);
           return;
         }
@@ -3456,18 +3456,18 @@ export default function App() {
             if(data) setUser({ type: parsed.type, session_exp: parsed.session_exp, ...data });
             setChecking(false);
           });
-      } catch { localStorage.removeItem("rentok_user"); setChecking(false); }
+      } catch { localStorage.removeItem("rentai_user"); setChecking(false); }
     } else { setChecking(false); }
   }, []);
 
   const handleLogin = (userData) => {
     const session = { ...userData, session_exp: Date.now() + SESSION_TTL_MS };
-    localStorage.setItem("rentok_user", JSON.stringify(session));
+    localStorage.setItem("rentai_user", JSON.stringify(session));
     setUser(session);
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("rentok_user");
+    localStorage.removeItem("rentai_user");
     setUser(null);
   };
 
